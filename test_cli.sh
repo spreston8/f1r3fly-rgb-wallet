@@ -9,14 +9,23 @@ TEMP_DIR=$(mktemp -d)
 WALLET_NAME="test1"
 PASSWORD="testpass123"
 
+# Detect CI environment and configure accordingly
+if [ -n "$CI" ]; then
+  echo "🤖 Running in CI mode"
+  COMPOSE_FILE="${COMPOSE_FILE:-ci/docker-compose.yml}"
+  BITCOIN_CLI="docker compose -f $COMPOSE_FILE exec -T bitcoind bitcoin-cli -regtest -rpcuser=user -rpcpassword=password"
+  SLEEP_TIME=5
+else
+  echo "💻 Running in local mode (assumes start-regtest.sh has been run)"
+  BITCOIN_DATADIR="${BITCOIN_DATADIR:-$(cd .. && pwd)/.bitcoin}"
+  BITCOIN_CLI="bitcoin-cli -regtest -datadir=$BITCOIN_DATADIR"
+  SLEEP_TIME=3
+fi
+
 # Test tracking
 TESTS_PASSED=0
 TESTS_FAILED=0
 TEST_RESULTS=()
-
-# Bitcoin CLI configuration
-BITCOIN_DATADIR="${BITCOIN_DATADIR:-$(cd .. && pwd)/.bitcoin}"
-BITCOIN_CLI="bitcoin-cli -regtest -datadir=$BITCOIN_DATADIR"
 
 # Setup logging
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,7 +68,7 @@ echo ""
 
 # Check if F1r3node is running
 F1R3NODE_RUNNING=false
-if curl -s http://localhost:40403/api/version >/dev/null 2>&1; then
+if curl -s http://localhost:40403/api/status >/dev/null 2>&1; then
     F1R3NODE_RUNNING=true
     echo "✓ F1r3node detected"
 else
@@ -282,8 +291,8 @@ if [ "$REGTEST_RUNNING" = true ] && [ -n "$WALLET_ADDRESS" ]; then
     echo "✓ Mined 101 blocks"
     
     # Wait for Electrs to index
-    echo "Waiting 3 seconds for Electrs indexing..."
-    sleep 3
+    echo "Waiting ${SLEEP_TIME} seconds for Electrs indexing..."
+    sleep $SLEEP_TIME
 else
     echo "⚠ Skipping (regtest not running or no address)"
 fi
@@ -413,7 +422,7 @@ if [ "$REGTEST_RUNNING" = true ]; then
     echo ""
     echo "Mining 1 block to confirm..."
     $BITCOIN_CLI generatetoaddress 1 "$WALLET_ADDRESS" > /dev/null 2>&1
-    sleep 3
+    sleep $SLEEP_TIME
     
     echo "Syncing wallet..."
     cargo run --bin f1r3fly-rgb-wallet -- \
@@ -548,8 +557,8 @@ if [ "$REGTEST_RUNNING" = true ]; then
     # Get balance before send (from Test 7)
     BALANCE_BEFORE="$CONFIRMED_SATS"
     
-    # Generate a new address to send to
-    RECIPIENT_ADDRESS=$($BITCOIN_CLI getnewaddress)
+    # Generate a new address from mining_wallet (available in both local and CI)
+    RECIPIENT_ADDRESS=$($BITCOIN_CLI -rpcwallet=mining_wallet getnewaddress)
     echo "Sending 10,000 sats to: $RECIPIENT_ADDRESS"
     echo ""
     
@@ -575,7 +584,7 @@ if [ "$REGTEST_RUNNING" = true ]; then
     
     echo "Mining 1 block to confirm..."
     $BITCOIN_CLI generatetoaddress 1 "$WALLET_ADDRESS" > /dev/null 2>&1
-    sleep 3
+    sleep $SLEEP_TIME
     
     echo "Syncing wallet..."
     cargo run --bin f1r3fly-rgb-wallet -- \
