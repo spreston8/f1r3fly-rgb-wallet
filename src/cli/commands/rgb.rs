@@ -221,7 +221,8 @@ pub async fn rgb_balance(
         for balance in &balances {
             println!("Asset: {} ({})", balance.name, balance.ticker);
             println!("  Contract ID: {}", balance.contract_id);
-            println!("  Total:       {}", format_amount(balance.total, 8)); // Default to 8 decimals for display
+            println!("  Total:       {}", format_amount(balance.total, balance.precision));
+            println!("  Precision:   {}", balance.precision);
             
             if !balance.utxo_balances.is_empty() {
                 println!("  UTXOs:");
@@ -229,7 +230,7 @@ pub async fn rgb_balance(
                     println!(
                         "    {} - {}",
                         utxo_balance.outpoint,
-                        format_amount(utxo_balance.amount, 8)
+                        format_amount(utxo_balance.amount, balance.precision)
                     );
                 }
             }

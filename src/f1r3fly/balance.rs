@@ -48,6 +48,9 @@ pub struct AssetBalance {
     /// Total balance (sum of all UTXOs holding this asset)
     pub total: u64,
 
+    /// Decimal precision (0 = indivisible, 8 = like BTC)
+    pub precision: u8,
+
     /// Per-UTXO balances
     pub utxo_balances: Vec<UtxoBalance>,
 }
@@ -132,8 +135,8 @@ pub async fn get_rgb_balance(
         let contract_id_str = contract_id.to_string();
 
         // Get asset metadata from genesis info (clone early to avoid borrow conflicts)
-        let (ticker, name) = match contracts_manager.get_genesis_utxo(&contract_id_str) {
-            Some(info) => (info.ticker.clone(), info.name.clone()),
+        let (ticker, name, precision) = match contracts_manager.get_genesis_utxo(&contract_id_str) {
+            Some(info) => (info.ticker.clone(), info.name.clone(), info.precision),
             None => continue, // Skip assets without genesis info
         };
 
@@ -183,6 +186,7 @@ pub async fn get_rgb_balance(
                 ticker,
                 name,
                 total: total_balance,
+                precision,
                 utxo_balances,
             });
         }
@@ -226,7 +230,7 @@ pub async fn get_asset_balance(
         .map_err(|e| BalanceError::ContractNotFound(format!("Invalid contract ID: {}", e)))?;
 
     // Get asset metadata (clone early to avoid borrow conflicts)
-    let (ticker, name) = {
+    let (ticker, name, precision) = {
         let genesis_info = contracts_manager
             .get_genesis_utxo(contract_id_str)
             .ok_or_else(|| {
@@ -235,7 +239,7 @@ pub async fn get_asset_balance(
                     contract_id_str
                 ))
             })?;
-        (genesis_info.ticker.clone(), genesis_info.name.clone())
+        (genesis_info.ticker.clone(), genesis_info.name.clone(), genesis_info.precision)
     };
 
     // Get contract instance
@@ -279,6 +283,7 @@ pub async fn get_asset_balance(
         ticker,
         name,
         total: total_balance,
+        precision,
         utxo_balances,
     })
 }

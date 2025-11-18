@@ -122,7 +122,7 @@ pub enum Commands {
         ticker: String,
 
         /// Asset full name (e.g., "US Dollar")
-        #[arg(short, long)]
+        #[arg(long)]
         name: String,
 
         /// Total supply (raw integer, e.g., 100000000)
