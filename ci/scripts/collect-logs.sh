@@ -34,7 +34,7 @@ echo "  → Service health..."
     
     echo ""
     echo "=== Electrs Status ==="
-    curl -s http://localhost:3002/api/blocks/tip/height 2>&1 || echo "Electrs API not available"
+    curl -s http://localhost:3002/blocks/tip/height 2>&1 || echo "Electrs API not available"
     
     echo ""
     echo "=== F1r3node Status ==="

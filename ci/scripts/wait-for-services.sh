@@ -36,7 +36,7 @@ wait_for_service() {
         fi
         
         # Check if container is healthy
-        health=$(docker compose -f $COMPOSE_FILE ps --format json $service 2>/dev/null | jq -r '.[0].Health // "unknown"')
+        health=$(docker compose -f $COMPOSE_FILE ps --format json $service 2>/dev/null | jq -r '.Health // "unknown"')
         
         if [ "$health" = "healthy" ]; then
             echo -e "${GREEN}✅ $description is ready (${elapsed}s)${NC}"
@@ -88,21 +88,21 @@ wait_for_log() {
 mine_initial_blocks() {
     echo -e "${YELLOW}⛏️  Mining initial blocks for Bitcoin...${NC}"
     
-    # Create wallet
-    docker compose -f $COMPOSE_FILE exec -T bitcoind \
+    # Create wallet (must match name in test code: mining_wallet)
+    docker compose -f $COMPOSE_FILE exec bitcoind \
         bitcoin-cli -regtest -rpcuser=user -rpcpassword=password \
-        createwallet "miner" 2>/dev/null || echo "Wallet already exists"
+        createwallet "mining_wallet" 2>/dev/null || echo "Wallet already exists"
     
     # Get new address
-    local address=$(docker compose -f $COMPOSE_FILE exec -T bitcoind \
+    local address=$(docker compose -f $COMPOSE_FILE exec bitcoind \
         bitcoin-cli -regtest -rpcuser=user -rpcpassword=password \
-        -rpcwallet=miner getnewaddress)
+        -rpcwallet=mining_wallet getnewaddress)
     
     # Mine 103 blocks (need 101+ for coinbase maturity)
     echo -e "${YELLOW}   Mining 103 blocks to address: $address${NC}"
-    docker compose -f $COMPOSE_FILE exec -T bitcoind \
+    docker compose -f $COMPOSE_FILE exec bitcoind \
         bitcoin-cli -regtest -rpcuser=user -rpcpassword=password \
-        -rpcwallet=miner generatetoaddress 103 "$address" > /dev/null
+        -rpcwallet=mining_wallet generatetoaddress 103 "$address" > /dev/null
     
     echo -e "${GREEN}✅ Mined 103 blocks${NC}"
 }
@@ -133,8 +133,47 @@ mine_initial_blocks
 
 echo ""
 echo -e "${BLUE}Step 3: Electrs Indexer${NC}"
-wait_for_service "electrs" "Electrs"
-wait_for_log "electrs" "finished full compaction" "Electrs initial indexing"
+echo -e "${YELLOW}⏳ Waiting for Electrs indexing...${NC}"
+# Wait for electrs to finish compaction (visible in logs)
+start_time=$(date +%s)
+while true; do
+    current_time=$(date +%s)
+    elapsed=$((current_time - start_time))
+    
+    if [ $elapsed -gt $TIMEOUT ]; then
+        echo -e "${RED}❌ Timeout waiting for Electrs (${TIMEOUT}s)${NC}"
+        docker compose -f $COMPOSE_FILE logs --tail=50 electrs
+        exit 1
+    fi
+    
+    if docker compose -f $COMPOSE_FILE logs electrs 2>&1 | grep -q "finished full compaction"; then
+        echo -e "${GREEN}✅ Electrs indexing complete (${elapsed}s)${NC}"
+        break
+    fi
+    
+    echo -ne "${YELLOW}⏱️  Waiting for Electrs indexing... ${elapsed}s / ${TIMEOUT}s\r${NC}"
+    sleep 2
+done
+
+# Additional wait for HTTP API to be responsive
+echo -e "${YELLOW}⏳ Waiting for Electrs API...${NC}"
+start_time=$(date +%s)
+while true; do
+    current_time=$(date +%s)
+    elapsed=$((current_time - start_time))
+    
+    if [ $elapsed -gt 30 ]; then
+        echo -e "${YELLOW}⚠️  Electrs API slow to respond, proceeding anyway${NC}"
+        break
+    fi
+    
+    if curl -s http://localhost:3002/blocks/tip/height > /dev/null 2>&1; then
+        echo -e "${GREEN}✅ Electrs API ready (${elapsed}s)${NC}"
+        break
+    fi
+    
+    sleep 1
+done
 
 echo ""
 echo -e "${BLUE}Step 4: F1r3node${NC}"
@@ -143,7 +182,7 @@ wait_for_log "f1r3node" "Making a transition to Running" "F1r3node running state
 
 echo ""
 echo -e "${BLUE}Step 5: API Verification${NC}"
-verify_service_api "http://localhost:3002/api/blocks/tip/height" "Electrs (Esplora)"
+verify_service_api "http://localhost:3002/blocks/tip/height" "Electrs (Esplora)"
 verify_service_api "http://localhost:40403/api/status" "F1r3node"
 
 echo ""

@@ -35,40 +35,34 @@ services:
 
   # ============================================================================
   # Electrs - Blockchain Indexer & Esplora Backend
+  # Built from source (blockstream/electrs:new-index) - matches DEVELOPER.md
   # ============================================================================
   electrs:
-    image: blockstream/electrs:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.electrs
     container_name: electrs-test
     networks:
       - test-network
     ports:
       - "3002:3002"    # HTTP API (Esplora backend)
-      - "60401:60401"  # Electrum RPC
+      - "50001:50001"  # Electrum RPC
+      - "24224:24224"  # Monitoring
     volumes:
       - electrs-data:/data
-    environment:
-      RUST_LOG: info
     command:
       - --network=regtest
       - --daemon-rpc-addr=bitcoind:18443
       - --cookie=user:password
-      - --electrum-rpc-addr=0.0.0.0:60401
+      - --electrum-rpc-addr=0.0.0.0:50001
       - --http-addr=0.0.0.0:3002
+      - --monitoring-addr=0.0.0.0:24224
       - --db-dir=/data
-      - --daemon-dir=/data/.bitcoin
-      - --utxos-limit=1000
-      - --electrum-txs-limit=1000
-      - --cors=*
+      - --jsonrpc-import
       - -vvv
     depends_on:
       bitcoind:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/api/blocks/tip/height"]
-      interval: 10s
-      timeout: 10s
-      retries: 30
-      start_period: 30s
 
   # ============================================================================
   # F1r3node - Standalone Validator

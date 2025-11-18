@@ -1,0 +1,41 @@
+# Build Electrs from source - matches DEVELOPER.md setup
+FROM rust:1.75-slim as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    clang \
+    cmake \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and build electrs from blockstream repo (new-index branch)
+WORKDIR /build
+RUN git clone https://github.com/blockstream/electrs.git && \
+    cd electrs && \
+    git checkout new-index && \
+    cargo build --release
+
+# Runtime image
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy electrs binary from builder
+COPY --from=builder /build/electrs/target/release/electrs /usr/local/bin/electrs
+
+# Create data directory
+RUN mkdir -p /data
+
+# Expose ports
+EXPOSE 50001 3002 24224
+
+# Set working directory
+WORKDIR /data
+
+# Default entrypoint
+ENTRYPOINT ["/usr/local/bin/electrs"]
+

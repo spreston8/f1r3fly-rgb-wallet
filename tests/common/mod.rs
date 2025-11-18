@@ -43,18 +43,42 @@ impl BitcoinRpcClient {
     }
 
     /// Execute bitcoin-cli command
+    /// 
+    /// Supports both local and Docker environments:
+    /// - If Bitcoin is in Docker (CI or docker-compose), use docker exec
+    /// - Otherwise, use local bitcoin-cli with datadir
     fn execute_cli(&self, args: &[&str]) -> Result<String, String> {
-        let mut cmd = Command::new("bitcoin-cli");
-        cmd.arg("-regtest")
-            .arg(format!("-datadir={}", self.datadir));
-
-        for arg in args {
-            cmd.arg(arg);
-        }
-
-        let output = cmd
+        // Check if we should use Docker (bitcoin-test container exists)
+        let use_docker = Command::new("docker")
+            .args(["ps", "--filter", "name=bitcoind-test", "--format", "{{.Names}}"])
             .output()
-            .map_err(|e| format!("Failed to execute bitcoin-cli: {}", e))?;
+            .ok()
+            .and_then(|output| {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                Some(stdout.contains("bitcoind-test"))
+            })
+            .unwrap_or(false);
+
+        let output = if use_docker {
+            // Use docker exec to run bitcoin-cli inside the container
+            let mut cmd = Command::new("docker");
+            cmd.args(["exec", "bitcoind-test", "bitcoin-cli", "-regtest", "-rpcuser=user", "-rpcpassword=password"]);
+            for arg in args {
+                cmd.arg(arg);
+            }
+            cmd.output()
+                .map_err(|e| format!("Failed to execute docker exec bitcoin-cli: {}", e))?
+        } else {
+            // Use local bitcoin-cli with datadir
+            let mut cmd = Command::new("bitcoin-cli");
+            cmd.arg("-regtest")
+                .arg(format!("-datadir={}", self.datadir));
+            for arg in args {
+                cmd.arg(arg);
+            }
+            cmd.output()
+                .map_err(|e| format!("Failed to execute bitcoin-cli: {}", e))?
+        };
 
         if !output.status.success() {
             return Err(format!(
