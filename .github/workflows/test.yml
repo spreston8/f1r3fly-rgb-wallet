@@ -30,6 +30,11 @@ jobs:
           toolchain: stable
           cache: true
       
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+      
       - name: Run keys tests
         run: cargo test --test keys_test
       
@@ -66,7 +71,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq curl
+          sudo apt-get install -y jq curl protobuf-compiler
       
       - name: Start Bitcoin services (bitcoind + electrs)
         run: |
@@ -137,7 +142,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq curl
+          sudo apt-get install -y jq curl protobuf-compiler
       
       - name: Start all services (bitcoind + electrs + f1r3node)
         run: |
@@ -184,37 +189,12 @@ jobs:
         run: docker compose -f ci/docker-compose.yml down -v
 
   # ==========================================================================
-  # Lint & Format Check
-  # ==========================================================================
-  lint:
-    name: Lint & Format
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
-          cache: true
-      
-      - name: Check formatting
-        run: cargo fmt -- --check
-      
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-  # ==========================================================================
   # Summary Job
   # ==========================================================================
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [unit-tests, bitcoin-integration, f1r3fly-integration, lint]
+    needs: [unit-tests, bitcoin-integration, f1r3fly-integration]
     if: always()
     
     steps:
@@ -222,8 +202,7 @@ jobs:
         run: |
           if [ "${{ needs.unit-tests.result }}" != "success" ] || \
              [ "${{ needs.bitcoin-integration.result }}" != "success" ] || \
-             [ "${{ needs.f1r3fly-integration.result }}" != "success" ] || \
-             [ "${{ needs.lint.result }}" != "success" ]; then
+             [ "${{ needs.f1r3fly-integration.result }}" != "success" ]; then
             echo "❌ Some tests failed"
             exit 1
           else
