@@ -1,0 +1,121 @@
+services:
+  # ============================================================================
+  # Bitcoin Core - Regtest Node
+  # ============================================================================
+  bitcoind:
+    image: lncm/bitcoind:v27.0
+    user: root
+    container_name: bitcoind-test
+    networks:
+      - test-network
+    ports:
+      - "18443:18443"  # RPC
+      - "28332:28332"  # ZMQ rawblock
+      - "28333:28333"  # ZMQ rawtx
+    volumes:
+      - bitcoin-data:/data/.bitcoin
+    command:
+      - -regtest
+      - -server
+      - -txindex
+      - -rpcallowip=0.0.0.0/0
+      - -rpcbind=0.0.0.0:18443
+      - -rpcuser=user
+      - -rpcpassword=password
+      - -zmqpubrawblock=tcp://0.0.0.0:28332
+      - -zmqpubrawtx=tcp://0.0.0.0:28333
+      - -fallbackfee=0.0001
+      - -deprecatedrpc=create_bdb
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-regtest", "-rpcuser=user", "-rpcpassword=password", "getblockchaininfo"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  # ============================================================================
+  # Electrs - Blockchain Indexer & Esplora Backend
+  # ============================================================================
+  electrs:
+    image: blockstream/electrs:latest
+    container_name: electrs-test
+    networks:
+      - test-network
+    ports:
+      - "3002:3002"    # HTTP API (Esplora backend)
+      - "60401:60401"  # Electrum RPC
+    volumes:
+      - electrs-data:/data
+    environment:
+      RUST_LOG: info
+    command:
+      - --network=regtest
+      - --daemon-rpc-addr=bitcoind:18443
+      - --cookie=user:password
+      - --electrum-rpc-addr=0.0.0.0:60401
+      - --http-addr=0.0.0.0:3002
+      - --db-dir=/data
+      - --daemon-dir=/data/.bitcoin
+      - --utxos-limit=1000
+      - --electrum-txs-limit=1000
+      - --cors=*
+      - -vvv
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/api/blocks/tip/height"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  # ============================================================================
+  # F1r3node - Standalone Validator
+  # ============================================================================
+  f1r3node:
+    image: f1r3flyindustries/f1r3fly-scala-node:latest
+    pull_policy: always
+    user: root
+    container_name: f1r3node-test
+    networks:
+      - test-network
+    ports:
+      - "40400:40400"  # Protocol server
+      - "40401:40401"  # External gRPC API
+      - "40402:40402"  # Internal gRPC API
+      - "40403:40403"  # HTTP API
+      - "40404:40404"  # Kademlia discovery
+      - "40405:40405"  # Admin HTTP API
+    volumes:
+      - ./conf/standalone.conf:/var/lib/rnode/rnode.conf
+      - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
+      - ./conf/logback.xml:/var/lib/rnode/logback.xml
+      - f1r3node-data:/var/lib/rnode/
+    environment:
+      - STANDALONE_HOST=f1r3node-test
+      - STANDALONE_PRIVATE_KEY=5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+      - OPENAI_ENABLED=false
+    command:
+      - -Dlogback.configurationFile=/var/lib/rnode/logback.xml
+      - run
+      - -s
+      - --host=f1r3node-test
+      - --validator-private-key=5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:40403/api/status"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
+
+networks:
+  test-network:
+    driver: bridge
+
+volumes:
+  bitcoin-data:
+  electrs-data:
+  f1r3node-data:
+

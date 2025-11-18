@@ -1,0 +1,233 @@
+name: Tests
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ==========================================================================
+  # Unit Tests - No services required
+  # ==========================================================================
+  unit-tests:
+    name: Unit Tests (Keys & Storage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          cache: true
+      
+      - name: Run keys tests
+        run: cargo test --test keys_test --verbose
+      
+      - name: Run storage tests
+        run: cargo test --test storage_test --verbose
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: target/debug/deps/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ==========================================================================
+  # Bitcoin Integration Tests
+  # ==========================================================================
+  bitcoin-integration:
+    name: Bitcoin Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          cache: true
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+      
+      - name: Start Bitcoin services (bitcoind + electrs)
+        run: |
+          docker compose -f ci/docker-compose.yml up -d bitcoind electrs
+      
+      - name: Wait for Bitcoin services
+        run: |
+          timeout 180 bash -c 'until docker compose -f ci/docker-compose.yml ps bitcoind | grep -q "healthy"; do sleep 2; done'
+          timeout 180 bash -c 'until docker compose -f ci/docker-compose.yml ps electrs | grep -q "healthy"; do sleep 2; done'
+          
+          # Mine initial blocks
+          docker compose -f ci/docker-compose.yml exec -T bitcoind \
+            bitcoin-cli -regtest -rpcuser=user -rpcpassword=password \
+            createwallet "miner" || true
+          
+          address=$(docker compose -f ci/docker-compose.yml exec -T bitcoind \
+            bitcoin-cli -regtest -rpcuser=user -rpcpassword=password \
+            -rpcwallet=miner getnewaddress)
+          
+          docker compose -f ci/docker-compose.yml exec -T bitcoind \
+            bitcoin-cli -regtest -rpcuser=user -rpcpassword=password \
+            -rpcwallet=miner generatetoaddress 103 "$address"
+          
+          # Wait for electrs to finish indexing
+          timeout 120 bash -c 'until docker compose -f ci/docker-compose.yml logs electrs | grep -q "finished full compaction"; do sleep 2; done'
+          
+          echo "✅ Bitcoin services ready"
+      
+      - name: Run Bitcoin integration tests
+        env:
+          BITCOIN_DATADIR: /tmp/bitcoin-ci
+        run: |
+          cargo test --test bitcoin_integration_tests --verbose -- --test-threads=4
+      
+      - name: Collect service logs
+        if: always()
+        run: ./ci/scripts/collect-logs.sh ci-logs-bitcoin
+      
+      - name: Upload service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitcoin-integration-logs
+          path: ci-logs-bitcoin/
+          retention-days: 7
+      
+      - name: Stop services
+        if: always()
+        run: docker compose -f ci/docker-compose.yml down -v
+
+  # ==========================================================================
+  # F1r3fly-RGB Integration Tests
+  # ==========================================================================
+  f1r3fly-integration:
+    name: F1r3fly-RGB Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          cache: true
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+      
+      - name: Start all services (bitcoind + electrs + f1r3node)
+        run: |
+          docker compose -f ci/docker-compose.yml up -d
+      
+      - name: Wait for all services
+        run: ./ci/scripts/wait-for-services.sh ci/docker-compose.yml
+      
+      - name: Run F1r3fly-RGB integration tests (sequential)
+        env:
+          FIREFLY_PRIVATE_KEY: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+          FIREFLY_HOST: localhost
+          FIREFLY_GRPC_PORT: 40401
+          FIREFLY_HTTP_PORT: 40403
+          BITCOIN_DATADIR: /tmp/bitcoin-ci
+        run: |
+          cargo test --test f1r3fly_integration_tests --verbose -- --test-threads=1
+      
+      - name: Collect service logs
+        if: always()
+        run: ./ci/scripts/collect-logs.sh ci-logs-f1r3fly
+      
+      - name: Upload service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: f1r3fly-integration-logs
+          path: ci-logs-f1r3fly/
+          retention-days: 7
+      
+      - name: Upload wallet test data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: f1r3fly-wallet-data
+          path: |
+            /tmp/f1r3fly-test-*
+            ~/.f1r3fly-rgb-wallet
+          if-no-files-found: ignore
+          retention-days: 7
+      
+      - name: Stop services
+        if: always()
+        run: docker compose -f ci/docker-compose.yml down -v
+
+  # ==========================================================================
+  # Lint & Format Check
+  # ==========================================================================
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          cache: true
+      
+      - name: Check formatting
+        run: cargo fmt -- --check
+      
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # ==========================================================================
+  # Summary Job
+  # ==========================================================================
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, bitcoin-integration, f1r3fly-integration, lint]
+    if: always()
+    
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.unit-tests.result }}" != "success" ] || \
+             [ "${{ needs.bitcoin-integration.result }}" != "success" ] || \
+             [ "${{ needs.f1r3fly-integration.result }}" != "success" ] || \
+             [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "❌ Some tests failed"
+            exit 1
+          else
+            echo "✅ All tests passed"
+          fi
+
