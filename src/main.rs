@@ -9,6 +9,9 @@ use f1r3fly_rgb_wallet::config::{ConfigOverrides, NetworkType};
 use std::process;
 
 fn main() {
+    // Load .env file if present (for FIREFLY_PRIVATE_KEY and other config)
+    dotenv::dotenv().ok();
+
     let cli = Cli::parse();
 
     // Parse network string to NetworkType
@@ -59,9 +62,14 @@ fn main() {
             commands::bitcoin::sync(cli.wallet, password, overrides).map_err(Into::into)
         }
 
-        Commands::GetBalance { password } => {
-            commands::bitcoin::get_balance(cli.wallet, password, overrides).map_err(Into::into)
-        }
+        Commands::GetBalance { password } => match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt
+                .block_on(commands::bitcoin::get_balance(
+                    cli.wallet, password, overrides,
+                ))
+                .map_err(Into::into),
+            Err(e) => Err(format!("Failed to create async runtime: {}", e).into()),
+        },
 
         Commands::GetAddresses { count, password } => {
             commands::bitcoin::get_addresses(cli.wallet, count, password, overrides)
@@ -90,29 +98,25 @@ fn main() {
             precision,
             genesis_utxo,
             password,
-        } => {
-            match cli.wallet.as_deref() {
-                Some(wallet_name) => {
-                    match tokio::runtime::Runtime::new() {
-                        Ok(rt) => rt
-                            .block_on(commands::rgb::issue_asset(
-                                wallet_name,
-                                &ticker,
-                                &name,
-                                supply,
-                                precision,
-                                &genesis_utxo,
-                                &password,
-                                &overrides,
-                            ))
-                            .map(|_| ())
-                            .map_err(Into::into),
-                        Err(e) => Err(format!("Failed to create async runtime: {}", e).into()),
-                    }
-                }
-                None => Err("Wallet name required (use --wallet <name>)".into()),
-            }
-        }
+        } => match cli.wallet.as_deref() {
+            Some(wallet_name) => match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt
+                    .block_on(commands::rgb::issue_asset(
+                        wallet_name,
+                        &ticker,
+                        &name,
+                        supply,
+                        precision,
+                        &genesis_utxo,
+                        &password,
+                        &overrides,
+                    ))
+                    .map(|_| ())
+                    .map_err(Into::into),
+                Err(e) => Err(format!("Failed to create async runtime: {}", e).into()),
+            },
+            None => Err("Wallet name required (use --wallet <name>)".into()),
+        },
 
         Commands::ListAssets { password } => match cli.wallet.as_deref() {
             Some(wallet_name) => commands::rgb::list_assets(wallet_name, &password, &overrides)
@@ -150,6 +154,29 @@ fn main() {
                     .map_err(Into::into)
             }
             None => Err("Wallet name required (use --wallet <name>)".into()),
+        },
+
+        Commands::ListUtxos {
+            available_only,
+            rgb_only,
+            confirmed_only,
+            min_amount,
+            format,
+            password,
+        } => match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt
+                .block_on(commands::bitcoin::list_utxos(
+                    cli.wallet,
+                    password,
+                    available_only,
+                    rgb_only,
+                    confirmed_only,
+                    min_amount,
+                    format,
+                    overrides,
+                ))
+                .map_err(Into::into),
+            Err(e) => Err(format!("Failed to create async runtime: {}", e).into()),
         },
     };
 

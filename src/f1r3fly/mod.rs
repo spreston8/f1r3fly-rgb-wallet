@@ -14,8 +14,8 @@ pub use asset::{
     IssueAssetRequest,
 };
 pub use balance::{
-    get_asset_balance, get_occupied_utxos, get_rgb_balance, AssetBalance, BalanceError,
-    RgbOccupiedUtxo, UtxoBalance,
+    get_asset_balance, get_occupied_utxos, get_rgb_balance, get_rgb_seal_info, AssetBalance,
+    BalanceError, RgbOccupiedUtxo, UtxoBalance,
 };
 pub use contracts::{ContractsManagerError, F1r3flyContractsManager, F1r3flyState, GenesisUtxoInfo};
 pub use executor::F1r3flyExecutorManager;

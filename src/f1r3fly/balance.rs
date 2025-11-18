@@ -343,11 +343,7 @@ pub async fn get_occupied_utxos(
                     // Store or aggregate
                     utxo_map.insert(
                         outpoint_str,
-                        (
-                            contract_id_str.clone(),
-                            ticker.clone(),
-                            amount,
-                        ),
+                        (contract_id_str.clone(), ticker.clone(), amount),
                     );
                 }
             }
@@ -365,6 +361,126 @@ pub async fn get_occupied_utxos(
     }
 
     Ok(occupied_utxos)
+}
+
+/// Get RGB seal information for a specific UTXO
+///
+/// Queries F1r3node contracts to determine which RGB assets (if any) are bound
+/// to the specified UTXO. This enriches Bitcoin UTXO data with RGB metadata.
+///
+/// # Process
+///
+/// 1. Parse outpoint string to BDK OutPoint
+/// 2. Convert to TxoSeal for RGB queries
+/// 3. Query all contracts for balance at this seal
+/// 4. Build `RgbSealInfo` for each contract with non-zero balance
+///
+/// # Arguments
+///
+/// * `contracts_manager` - F1r3fly contracts manager
+/// * `outpoint_str` - UTXO outpoint as "txid:vout" string
+///
+/// # Returns
+///
+/// Vector of `crate::types::RgbSealInfo` (one per asset on this UTXO).
+/// Returns empty vector if UTXO holds no RGB assets.
+///
+/// # Errors
+///
+/// Returns error if:
+/// - Outpoint format is invalid
+/// - Contract queries fail critically
+///
+/// # Example
+///
+/// ```ignore
+/// use f1r3fly_rgb_wallet::f1r3fly::balance::get_rgb_seal_info;
+///
+/// let rgb_assets = get_rgb_seal_info(
+///     &mut contracts_manager,
+///     "abc123...def:0"
+/// ).await?;
+///
+/// for asset in rgb_assets {
+///     println!("{}: {} tokens", asset.ticker, asset.amount.unwrap_or(0));
+/// }
+/// ```
+pub async fn get_rgb_seal_info(
+    contracts_manager: &mut F1r3flyContractsManager,
+    outpoint_str: &str,
+) -> Result<Vec<crate::types::RgbSealInfo>, BalanceError> {
+    use crate::types::RgbSealInfo;
+
+    // Parse outpoint string "txid:vout"
+    let parts: Vec<&str> = outpoint_str.split(':').collect();
+    if parts.len() != 2 {
+        return Err(BalanceError::InvalidUtxo(format!(
+            "Invalid outpoint format '{}', expected 'txid:vout'",
+            outpoint_str
+        )));
+    }
+
+    // Parse txid and vout
+    use std::str::FromStr;
+    let txid = bdk_wallet::bitcoin::Txid::from_str(parts[0])
+        .map_err(|e| BalanceError::InvalidUtxo(format!("Invalid txid '{}': {}", parts[0], e)))?;
+    let vout: u32 = parts[1]
+        .parse()
+        .map_err(|e| BalanceError::InvalidUtxo(format!("Invalid vout '{}': {}", parts[1], e)))?;
+
+    // Create BDK OutPoint
+    let outpoint = BdkOutPoint { txid, vout };
+
+    // Convert to RGB TxoSeal
+    let seal = convert_outpoint_to_seal(&outpoint)?;
+
+    let mut rgb_seals = Vec::new();
+
+    // Query all contracts for balances at this seal
+    let contract_ids = contracts_manager.contracts().list();
+
+    for contract_id in contract_ids {
+        let contract_id_str = contract_id.to_string();
+
+        // Get asset metadata (clone to avoid borrow conflicts)
+        let ticker = match contracts_manager.get_genesis_utxo(&contract_id_str) {
+            Some(info) => info.ticker.clone(),
+            None => continue, // Skip if no genesis info
+        };
+
+        // Get contract instance
+        let contract = match contracts_manager.contracts_mut().get(&contract_id) {
+            Some(c) => c,
+            None => continue, // Skip if contract not found
+        };
+
+        // Query balance at this seal
+        match contract.balance(&seal).await {
+            Ok(amount) if amount > 0 => {
+                // This UTXO holds tokens for this contract
+                rgb_seals.push(RgbSealInfo {
+                    contract_id: contract_id_str,
+                    ticker,
+                    amount: Some(amount),
+                });
+            }
+            Ok(_) => {
+                // Zero balance, UTXO doesn't hold this asset
+            }
+            Err(e) => {
+                // Query failed, log but continue
+                // (UTXO might not be relevant to this contract)
+                log::debug!(
+                    "Balance query failed for UTXO {} on contract {}: {}",
+                    outpoint_str,
+                    contract_id_str,
+                    e
+                );
+            }
+        }
+    }
+
+    Ok(rgb_seals)
 }
 
 /// Convert BDK OutPoint to RGB TxoSeal
@@ -402,4 +518,3 @@ fn convert_outpoint_to_seal(outpoint: &BdkOutPoint) -> Result<TxoSeal, BalanceEr
         secondary: TxoSealExt::Noise(Noise::strict_dumb()),
     })
 }
-

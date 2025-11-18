@@ -170,6 +170,33 @@ pub enum Commands {
         #[arg(short, long)]
         password: String,
     },
+
+    /// List all UTXOs with status and RGB occupation info
+    ListUtxos {
+        /// Only show available (non-RGB) UTXOs
+        #[arg(long)]
+        available_only: bool,
+
+        /// Only show RGB-occupied UTXOs
+        #[arg(long)]
+        rgb_only: bool,
+
+        /// Only show confirmed UTXOs (safer for RGB operations)
+        #[arg(long, default_value = "true")]
+        confirmed_only: bool,
+
+        /// Minimum amount in BTC
+        #[arg(long)]
+        min_amount: Option<f64>,
+
+        /// Output format: table, json, compact
+        #[arg(long, short, default_value = "table")]
+        format: String,
+
+        /// Password to decrypt the wallet
+        #[arg(short, long)]
+        password: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]

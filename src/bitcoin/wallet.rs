@@ -106,9 +106,8 @@ impl BitcoinWallet {
             .descriptor(KeychainKind::Internal, Some(internal_descriptor.clone()))
             .extract_keys() // Extract private keys from descriptors for signing
             .load_wallet(&mut conn)
-            .map_err(|e| {
-                BitcoinWalletError::Load(format!("Failed to load wallet: {}", e))
-            })? {
+            .map_err(|e| BitcoinWalletError::Load(format!("Failed to load wallet: {}", e)))?
+        {
             Some(wallet) => wallet,
             None => {
                 // Wallet doesn't exist, create new one
@@ -217,6 +216,94 @@ impl BitcoinWallet {
             addresses.push(address_info.address);
         }
         Ok(addresses)
+    }
+
+    /// List all UTXOs with basic information (Bitcoin-only, no RGB data)
+    ///
+    /// Returns all unspent outputs controlled by this wallet, including confirmation
+    /// counts calculated from the current blockchain height. RGB occupation status
+    /// is set to Available by default (RGB enrichment happens in manager layer).
+    ///
+    /// # Returns
+    ///
+    /// Vector of `crate::types::UtxoInfo` with Bitcoin data only.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if wallet queries fail.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use f1r3fly_rgb_wallet::bitcoin::BitcoinWallet;
+    ///
+    /// let utxos = wallet.list_all_utxos()?;
+    /// for utxo in utxos {
+    ///     println!("{}: {} BTC (confirmations: {})",
+    ///         utxo.outpoint,
+    ///         utxo.amount_btc,
+    ///         utxo.confirmations
+    ///     );
+    /// }
+    /// ```
+    pub fn list_all_utxos(&self) -> Result<Vec<crate::types::UtxoInfo>, BitcoinWalletError> {
+        use crate::bitcoin::balance;
+        use crate::types::{UtxoInfo, UtxoStatus};
+        use std::collections::HashSet;
+
+        // Get blockchain height for confirmation calculation
+        let local_chain = self.wallet.local_chain();
+        let current_height = local_chain.tip().height();
+
+        // Use existing list_utxos function with empty RGB set (no RGB data yet)
+        let rgb_occupied = HashSet::new();
+        let bdk_utxos = balance::list_utxos(self, &rgb_occupied)
+            .map_err(|e| BitcoinWalletError::Load(format!("Failed to list UTXOs: {}", e)))?;
+
+        // Convert BDK UTXOs to our types::UtxoInfo
+        let mut utxos: Vec<UtxoInfo> = bdk_utxos
+            .into_iter()
+            .map(|utxo| {
+                // Calculate confirmations from blockchain height
+                let confirmations = if let Some(conf_height) = utxo.confirmation_height {
+                    // Confirmed: current_height - conf_height + 1
+                    current_height.saturating_sub(conf_height).saturating_add(1)
+                } else {
+                    // Unconfirmed: 0 confirmations
+                    0
+                };
+
+                // Determine status based on confirmation
+                let status = if confirmations == 0 {
+                    UtxoStatus::Unconfirmed
+                } else {
+                    UtxoStatus::Available
+                };
+
+                // Format outpoint as "txid:vout"
+                let outpoint = format!("{}:{}", utxo.outpoint.txid, utxo.outpoint.vout);
+                let txid = utxo.outpoint.txid.to_string();
+
+                // Convert satoshis to BTC for display
+                let amount_btc = utxo.amount as f64 / 100_000_000.0;
+
+                UtxoInfo {
+                    outpoint,
+                    txid,
+                    vout: utxo.outpoint.vout,
+                    amount_sats: utxo.amount,
+                    amount_btc,
+                    confirmations,
+                    status,
+                    rgb_assets: vec![], // No RGB data at Bitcoin layer
+                }
+            })
+            .collect();
+
+        // Sort by confirmations descending (most confirmed first)
+        utxos.sort_by(|a, b| b.confirmations.cmp(&a.confirmations));
+
+        Ok(utxos)
     }
 }
 

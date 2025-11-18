@@ -9,3 +9,4 @@ pub mod config;
 pub mod f1r3fly;
 pub mod manager;
 pub mod storage;
+pub mod types;

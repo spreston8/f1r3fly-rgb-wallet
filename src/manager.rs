@@ -11,15 +11,17 @@ use crate::config::{ConfigError, GlobalConfig};
 use crate::f1r3fly::balance::BalanceError as RgbBalanceError;
 use crate::f1r3fly::executor::F1r3flyExecutorError;
 use crate::f1r3fly::{
-    get_asset_balance, get_asset_info, get_occupied_utxos, get_rgb_balance, issue_asset,
-    list_assets, AssetBalance, AssetError, AssetInfo, AssetListItem, ContractsManagerError,
-    F1r3flyContractsManager, F1r3flyExecutorManager, IssueAssetRequest, RgbOccupiedUtxo,
+    get_asset_balance, get_asset_info, get_occupied_utxos, get_rgb_balance, get_rgb_seal_info,
+    issue_asset, list_assets, AssetBalance, AssetError, AssetInfo, AssetListItem,
+    ContractsManagerError, F1r3flyContractsManager, F1r3flyExecutorManager, IssueAssetRequest,
+    RgbOccupiedUtxo,
 };
 use crate::storage::{
     file_system::{create_wallet_directory, load_wallet, save_wallet, wallet_dir, FileSystemError},
     keys::{generate_mnemonic, KeyError},
     models::{WalletKeys, WalletMetadata},
 };
+use crate::types::{UtxoFilter, UtxoInfo, UtxoStatus};
 use bdk_wallet::bitcoin::OutPoint;
 #[allow(deprecated)]
 use bdk_wallet::{KeychainKind, SignOptions};
@@ -921,4 +923,149 @@ impl WalletManager {
 
         Ok(get_occupied_utxos(contracts_manager, bitcoin_wallet).await?)
     }
+
+    /// List all wallet UTXOs with optional RGB enrichment and filtering
+    ///
+    /// Returns a comprehensive view of all Bitcoin UTXOs, enriched with RGB asset
+    /// information if F1r3fly contracts are loaded. Supports filtering by availability,
+    /// RGB occupation, confirmation status, and amount.
+    ///
+    /// # Process
+    ///
+    /// 1. Get Bitcoin UTXOs from BDK wallet (Step 2)
+    /// 2. If F1r3fly contracts loaded, enrich each UTXO with RGB seal info (Step 3)
+    /// 3. Update UTXO status based on RGB occupation (Available → RgbOccupied)
+    /// 4. Apply filters (available-only, rgb-only, confirmed-only, min-amount)
+    /// 5. Return filtered and enriched UTXO list
+    ///
+    /// # Arguments
+    ///
+    /// * `filter` - Filter options (see `UtxoFilter`)
+    ///
+    /// # Returns
+    ///
+    /// Vector of `UtxoInfo` with Bitcoin data and optional RGB metadata
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Wallet not loaded
+    /// - Bitcoin wallet queries fail
+    /// - RGB queries fail critically
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use f1r3fly_rgb_wallet::types::UtxoFilter;
+    ///
+    /// // List all UTXOs
+    /// let all_utxos = manager.list_utxos(UtxoFilter::default()).await?;
+    ///
+    /// // List only confirmed, available UTXOs with at least 0.0003 BTC
+    /// let filter = UtxoFilter {
+    ///     confirmed_only: true,
+    ///     available_only: true,
+    ///     min_amount_sats: Some(30_000),
+    ///     ..Default::default()
+    /// };
+    /// let filtered = manager.list_utxos(filter).await?;
+    ///
+    /// for utxo in filtered {
+    ///     println!("{}: {} BTC (status: {})",
+    ///         utxo.outpoint,
+    ///         utxo.amount_btc,
+    ///         utxo.status
+    ///     );
+    ///     for asset in utxo.rgb_assets {
+    ///         println!("  - {} {}", asset.amount.unwrap_or(0), asset.ticker);
+    ///     }
+    /// }
+    /// ```
+    pub async fn list_utxos(&mut self, filter: UtxoFilter) -> Result<Vec<UtxoInfo>, ManagerError> {
+        // 1. Get Bitcoin UTXOs from wallet (Bitcoin-only data)
+        let bitcoin_wallet = self
+            .bitcoin_wallet
+            .as_ref()
+            .ok_or(ManagerError::WalletNotLoaded)?;
+
+        let mut utxos = bitcoin_wallet.list_all_utxos()?;
+
+        // 2. If F1r3fly contracts loaded, enrich with RGB data
+        if let Some(ref mut contracts_manager) = self.f1r3fly_contracts {
+            for utxo in &mut utxos {
+                // Query RGB seal info for this UTXO
+                match get_rgb_seal_info(contracts_manager, &utxo.outpoint).await {
+                    Ok(rgb_assets) if !rgb_assets.is_empty() => {
+                        // This UTXO holds RGB assets
+                        utxo.status = UtxoStatus::RgbOccupied;
+                        utxo.rgb_assets = rgb_assets;
+                    }
+                    Ok(_) => {
+                        // No RGB assets on this UTXO (empty vector)
+                        // Keep status as Available or Unconfirmed
+                    }
+                    Err(e) => {
+                        // Query failed - log but don't fail the entire operation
+                        log::warn!(
+                            "Failed to query RGB seal info for UTXO {}: {}",
+                            utxo.outpoint,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        // 3. Apply filters
+        let filtered_utxos = apply_utxo_filters(utxos, filter);
+
+        Ok(filtered_utxos)
+    }
+}
+
+/// Apply filters to a list of UTXOs
+///
+/// Filters UTXOs based on the provided criteria:
+/// - `available_only`: Only include non-RGB UTXOs
+/// - `rgb_only`: Only include RGB-occupied UTXOs
+/// - `confirmed_only`: Only include confirmed UTXOs
+/// - `min_amount_sats`: Only include UTXOs with at least this amount
+///
+/// # Arguments
+///
+/// * `utxos` - Vector of UTXOs to filter
+/// * `filter` - Filter criteria
+///
+/// # Returns
+///
+/// Filtered vector of UTXOs
+fn apply_utxo_filters(utxos: Vec<UtxoInfo>, filter: UtxoFilter) -> Vec<UtxoInfo> {
+    utxos
+        .into_iter()
+        .filter(|utxo| {
+            // available_only filter: exclude RGB-occupied UTXOs
+            if filter.available_only && utxo.status == UtxoStatus::RgbOccupied {
+                return false;
+            }
+
+            // rgb_only filter: exclude non-RGB UTXOs
+            if filter.rgb_only && utxo.status != UtxoStatus::RgbOccupied {
+                return false;
+            }
+
+            // confirmed_only filter: exclude unconfirmed UTXOs
+            if filter.confirmed_only && utxo.confirmations == 0 {
+                return false;
+            }
+
+            // min_amount filter: exclude UTXOs below threshold
+            if let Some(min_amount) = filter.min_amount_sats {
+                if utxo.amount_sats < min_amount {
+                    return false;
+                }
+            }
+
+            true
+        })
+        .collect()
 }
