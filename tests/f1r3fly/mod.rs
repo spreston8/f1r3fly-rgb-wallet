@@ -16,6 +16,8 @@ mod balance_queries_test;
 mod complete_transfer_test;
 mod genesis_consignment_test;
 mod invoice_operations_test;
+mod multi_transfer_chain_test;
+mod validation_security_test;
 mod wallet_state_persistence_test;
 
 /// Initialize logger for tests and load environment configuration
