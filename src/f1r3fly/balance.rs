@@ -3,7 +3,7 @@
 //! Handles querying RGB token balances by mapping Bitcoin UTXOs to RGB seals
 //! and querying contract state on F1r3node.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -229,22 +229,22 @@ pub async fn get_asset_balance(
     let contract_id = f1r3fly_rgb::ContractId::from_str(contract_id_str)
         .map_err(|e| BalanceError::ContractNotFound(format!("Invalid contract ID: {}", e)))?;
 
-    // Get genesis info (needed for metadata AND for balance query)
-    // Clone early to avoid borrow conflicts
-    let genesis_info = contracts_manager
-        .get_genesis_utxo(contract_id_str)
-        .ok_or_else(|| {
-            BalanceError::ContractNotFound(format!(
-                "Genesis info not found for contract {}",
-                contract_id_str
-            ))
-        })?
-        .clone();
-
-    // Get asset metadata
-    let ticker = genesis_info.ticker.clone();
-    let name = genesis_info.name.clone();
-    let precision = genesis_info.precision;
+    // Get asset metadata (clone early to avoid borrow conflicts)
+    let (ticker, name, precision) = {
+        let genesis_info = contracts_manager
+            .get_genesis_utxo(contract_id_str)
+            .ok_or_else(|| {
+                BalanceError::ContractNotFound(format!(
+                    "Genesis info not found for contract {}",
+                    contract_id_str
+                ))
+            })?;
+        (
+            genesis_info.ticker.clone(),
+            genesis_info.name.clone(),
+            genesis_info.precision,
+        )
+    };
 
     // Get contract instance
     let contract = contracts_manager
@@ -252,31 +252,9 @@ pub async fn get_asset_balance(
         .get(&contract_id)
         .ok_or_else(|| BalanceError::ContractNotFound(contract_id_str.to_string()))?;
 
-    // Build unified set of outpoints to query
-    // Use HashSet for automatic deduplication (genesis UTXO may or may not be in wallet's list_unspent)
-    #[derive(Eq, PartialEq, Hash, Clone)]
-    struct OutpointKey {
-        txid: String,
-        vout: u32,
-    }
-
-    let mut outpoints_to_query = HashSet::new();
-
-    // 1. Always include genesis UTXO (from persisted state)
-    // This ensures we query the genesis balance even if it's not yet synced in the wallet
-    outpoints_to_query.insert(OutpointKey {
-        txid: genesis_info.txid.clone(),
-        vout: genesis_info.vout,
-    });
-
-    // 2. Add all UTXOs from wallet (will deduplicate genesis if present)
+    // Get all wallet UTXOs and addresses for balance queries
+    // RGB tracks balances by Bitcoin UTXO identifiers, but transfers may use witness placeholders
     let utxos: Vec<_> = bitcoin_wallet.inner().list_unspent().collect();
-    for utxo in &utxos {
-        outpoints_to_query.insert(OutpointKey {
-            txid: utxo.outpoint.txid.to_string(),
-            vout: utxo.outpoint.vout,
-        });
-    }
 
     // Get wallet addresses to check for witness identifiers
     // Check addresses up to a reasonable limit (not just derivation_index)
@@ -303,42 +281,30 @@ pub async fn get_asset_balance(
     let mut utxo_balances = Vec::new();
     let mut total_balance = 0u64;
 
-    // Query balance for all outpoints uniformly (genesis + wallet UTXOs)
-    for outpoint_key in &outpoints_to_query {
-        // Parse txid string to create OutPoint
-        let txid = bdk_wallet::bitcoin::Txid::from_str(&outpoint_key.txid)
-            .map_err(|e| BalanceError::InvalidUtxo(format!("Invalid txid '{}': {}", outpoint_key.txid, e)))?;
-
-        let bdk_outpoint = BdkOutPoint {
-            txid,
-            vout: outpoint_key.vout,
-        };
-
-        let seal = convert_outpoint_to_seal(&bdk_outpoint)?;
+    // Query balance for each actual UTXO
+    for utxo in &utxos {
+        let seal = convert_outpoint_to_seal(&utxo.outpoint)?;
 
         match contract.balance(&seal).await {
             Ok(amount) if amount > 0 => {
                 log::debug!(
                     "UTXO {}:{} has balance: {}",
-                    outpoint_key.txid,
-                    outpoint_key.vout,
+                    utxo.outpoint.txid,
+                    utxo.outpoint.vout,
                     amount
                 );
                 utxo_balances.push(UtxoBalance {
-                    outpoint: format!("{}:{}", outpoint_key.txid, outpoint_key.vout),
+                    outpoint: format!("{}:{}", utxo.outpoint.txid, utxo.outpoint.vout),
                     amount,
                 });
                 total_balance += amount;
             }
-            Ok(_) => {
-                // Zero balance, skip
-            }
+            Ok(_) => {}
             Err(e) => {
-                // Log but continue - UTXO might not hold this asset
                 log::debug!(
                     "Balance query failed for UTXO {}:{}: {}",
-                    outpoint_key.txid,
-                    outpoint_key.vout,
+                    utxo.outpoint.txid,
+                    utxo.outpoint.vout,
                     e
                 );
             }

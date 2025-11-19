@@ -4,6 +4,7 @@
 //! These tests focus on wallet-specific wrappers and state persistence.
 
 use f1r3fly_rgb_wallet::manager::WalletManager;
+use f1r3fly_rgb_wallet::storage::file_system::wallet_exists;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
@@ -116,10 +117,18 @@ pub async fn setup_wallet_with_genesis_utxo(
     // Uses wallet_name which contains the test name to ensure uniqueness
     let test_derivation_index = generate_test_derivation_index(wallet_name);
 
-    // 1. Create wallet
+    // 1. Create or load wallet
     let mut manager = WalletManager::new(env.config().clone())?;
-    manager.create_wallet(wallet_name, password)?;
-    manager.load_wallet(wallet_name, password)?;
+    let wallets_dir = env.config().wallets_dir.as_deref();
+
+    if wallet_exists(wallet_name, wallets_dir) {
+        println!("📂 Wallet '{}' already exists, loading it...", wallet_name);
+        manager.load_wallet(wallet_name, password)?;
+    } else {
+        println!("🆕 Creating new wallet '{}'...", wallet_name);
+        manager.create_wallet(wallet_name, password)?;
+        manager.load_wallet(wallet_name, password)?;
+    }
 
     // 1b. Set test-specific derivation index for contract isolation
     // This ensures parallel tests deploy to different registry URIs
