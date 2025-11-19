@@ -130,8 +130,7 @@ pub fn get_balance(wallet: &BitcoinWallet) -> Result<Balance, BalanceError> {
     let bdk_balance = wallet.inner().balance();
 
     let confirmed = bdk_balance.confirmed.to_sat();
-    let unconfirmed = bdk_balance.trusted_pending.to_sat()
-        + bdk_balance.untrusted_pending.to_sat();
+    let unconfirmed = bdk_balance.trusted_pending.to_sat() + bdk_balance.untrusted_pending.to_sat();
 
     Ok(Balance::new(confirmed, unconfirmed))
 }
@@ -308,7 +307,7 @@ pub fn get_addresses(
     // IMPORTANT: Only return already-revealed addresses, don't reveal new ones
     // Revealing should be done explicitly via get_new_address()
     let external_count = count.unwrap_or(100); // Default to 100 if not specified
-    
+
     for index in 0..external_count {
         let addr_info = wallet.inner().peek_address(KeychainKind::External, index);
         let is_used = wallet
@@ -337,7 +336,7 @@ pub fn get_addresses(
 
     // Get internal (change) addresses
     let internal_count = count.unwrap_or(100);
-    
+
     for index in 0..internal_count {
         let addr_info = wallet.inner().peek_address(KeychainKind::Internal, index);
         let is_used = wallet
@@ -399,4 +398,3 @@ pub fn get_unused_addresses(
 
     Ok(unused)
 }
-

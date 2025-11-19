@@ -93,10 +93,10 @@ pub fn sync_wallet(
 
     // Perform full scan
     log::info!("Querying blockchain data...");
-    
+
     // Get transaction count before sync
     let txs_before = wallet.inner().transactions().count();
-    
+
     let update = client
         .inner()
         .sync(request, 5) // parallel_requests = 5
@@ -226,4 +226,3 @@ where
 
     Ok(result)
 }
-

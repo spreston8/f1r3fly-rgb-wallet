@@ -139,22 +139,23 @@ fn test_wallet_creation_and_round_trip_encryption() {
 
     // 1. Generate mnemonic and derive keys
     let mnemonic = generate_mnemonic().expect("Failed to generate mnemonic");
-    let keys = WalletKeys::from_mnemonic(&mnemonic, NetworkType::Regtest)
-        .expect("Failed to derive keys");
+    let keys =
+        WalletKeys::from_mnemonic(&mnemonic, NetworkType::Regtest).expect("Failed to derive keys");
 
     // Verify keys are correctly derived
     assert_eq!(keys.mnemonic.to_string(), mnemonic.to_string());
-    assert!(keys.bitcoin_descriptor.starts_with("wpkh("));
+    assert!(keys.bitcoin_descriptor.starts_with("tr("));
     assert_eq!(keys.f1r3fly_public_key.len(), 66); // 33 bytes * 2 hex chars
-    assert!(
-        keys.f1r3fly_public_key.starts_with("02") || keys.f1r3fly_public_key.starts_with("03")
-    );
+    assert!(keys.f1r3fly_public_key.starts_with("02") || keys.f1r3fly_public_key.starts_with("03"));
 
     // Verify first address can be derived
     let first_address = keys
         .first_address(NetworkType::Regtest)
         .expect("Failed to derive first address");
-    assert!(first_address.starts_with("bcrt1"), "Regtest address should start with bcrt1");
+    assert!(
+        first_address.starts_with("bcrt1"),
+        "Regtest address should start with bcrt1"
+    );
 
     // 2. Create metadata
     let metadata = WalletMetadata::new(wallet_name.to_string(), NetworkType::Regtest);
@@ -192,8 +193,9 @@ fn test_wallet_creation_and_round_trip_encryption() {
     assert_eq!(loaded_metadata.created_at, metadata.created_at);
 
     // 5. Verify WalletInfo can be created
-    let wallet_info = WalletInfo::from_keys(wallet_name.to_string(), &loaded_keys, NetworkType::Regtest)
-        .expect("Failed to create WalletInfo");
+    let wallet_info =
+        WalletInfo::from_keys(wallet_name.to_string(), &loaded_keys, NetworkType::Regtest)
+            .expect("Failed to create WalletInfo");
     assert_eq!(wallet_info.name, wallet_name);
     assert_eq!(wallet_info.mnemonic, mnemonic.to_string());
     assert_eq!(wallet_info.network, NetworkType::Regtest);
@@ -211,8 +213,8 @@ fn test_wallet_decryption_fails_with_wrong_password() {
 
     // Create and save wallet
     let mnemonic = generate_mnemonic().expect("Failed to generate mnemonic");
-    let keys = WalletKeys::from_mnemonic(&mnemonic, NetworkType::Regtest)
-        .expect("Failed to derive keys");
+    let keys =
+        WalletKeys::from_mnemonic(&mnemonic, NetworkType::Regtest).expect("Failed to derive keys");
     let metadata = WalletMetadata::new(wallet_name.to_string(), NetworkType::Regtest);
 
     env.save_wallet(wallet_name, &keys, &metadata, correct_password)
@@ -237,7 +239,10 @@ fn test_wallet_decryption_fails_with_wrong_password() {
 
     // Verify correct password still works
     let result = env.load_wallet(wallet_name, correct_password);
-    assert!(result.is_ok(), "Loading with correct password should succeed");
+    assert!(
+        result.is_ok(),
+        "Loading with correct password should succeed"
+    );
 
     // Verify attempting to load non-existent wallet fails appropriately
     let result = env.load_wallet("nonexistent_wallet", correct_password);
@@ -296,7 +301,11 @@ fn test_listing_multiple_wallets_sorted_by_creation_date() {
         let found = wallets.iter().find(|w| &w.name == name);
         assert!(found.is_some(), "Wallet {} should be in list", name);
         let found_wallet = found.unwrap();
-        assert_eq!(found_wallet.network, *network, "Network should match for {}", name);
+        assert_eq!(
+            found_wallet.network, *network,
+            "Network should match for {}",
+            name
+        );
     }
 
     // Verify wallets are sorted by creation date (newest first)
@@ -312,7 +321,10 @@ fn test_listing_multiple_wallets_sorted_by_creation_date() {
         assert!(env.wallet_exists(name), "Wallet {} should exist", name);
     }
 
-    assert!(!env.wallet_exists("nonexistent"), "Nonexistent wallet should not exist");
+    assert!(
+        !env.wallet_exists("nonexistent"),
+        "Nonexistent wallet should not exist"
+    );
 
     // Verify we can load each wallet
     for name in &wallet_names {
@@ -329,15 +341,18 @@ fn test_deleting_wallet_removes_all_files_and_directory() {
 
     // Create wallet
     let mnemonic = generate_mnemonic().expect("Failed to generate mnemonic");
-    let keys = WalletKeys::from_mnemonic(&mnemonic, NetworkType::Regtest)
-        .expect("Failed to derive keys");
+    let keys =
+        WalletKeys::from_mnemonic(&mnemonic, NetworkType::Regtest).expect("Failed to derive keys");
     let metadata = WalletMetadata::new(wallet_name.to_string(), NetworkType::Regtest);
 
     env.save_wallet(wallet_name, &keys, &metadata, password)
         .expect("Failed to save wallet");
 
     // Verify wallet exists
-    assert!(env.wallet_exists(wallet_name), "Wallet should exist before deletion");
+    assert!(
+        env.wallet_exists(wallet_name),
+        "Wallet should exist before deletion"
+    );
     let wallet_path = env.wallet_path(wallet_name);
     assert!(wallet_path.exists(), "Wallet directory should exist");
     assert!(wallet_path.join("keys.json").exists());
@@ -353,7 +368,10 @@ fn test_deleting_wallet_removes_all_files_and_directory() {
         .expect("Failed to delete wallet");
 
     // Verify wallet no longer exists
-    assert!(!env.wallet_exists(wallet_name), "Wallet should not exist after deletion");
+    assert!(
+        !env.wallet_exists(wallet_name),
+        "Wallet should not exist after deletion"
+    );
     assert!(!wallet_path.exists(), "Wallet directory should be removed");
     assert!(!wallet_path.join("keys.json").exists());
     assert!(!wallet_path.join("wallet.json").exists());
@@ -415,14 +433,12 @@ fn test_wallet_keys_derivation_is_deterministic_across_networks() {
             network
         );
         assert_eq!(
-            keys1.bitcoin_descriptor,
-            keys2.bitcoin_descriptor,
+            keys1.bitcoin_descriptor, keys2.bitcoin_descriptor,
             "Bitcoin descriptors should match for {:?}",
             network
         );
         assert_eq!(
-            keys1.f1r3fly_public_key,
-            keys2.f1r3fly_public_key,
+            keys1.f1r3fly_public_key, keys2.f1r3fly_public_key,
             "F1r3fly public keys should match for {:?}",
             network
         );
@@ -435,8 +451,8 @@ fn test_wallet_keys_derivation_is_deterministic_across_networks() {
 
         // Verify Bitcoin descriptor has correct format
         assert!(
-            keys1.bitcoin_descriptor.starts_with("wpkh("),
-            "Descriptor should be wpkh for {:?}",
+            keys1.bitcoin_descriptor.starts_with("tr("),
+            "Descriptor should be tr (taproot) for {:?}",
             network
         );
         assert!(
@@ -470,8 +486,7 @@ fn test_wallet_keys_derivation_is_deterministic_across_networks() {
             let regtest_keys = WalletKeys::from_mnemonic(&mnemonic, NetworkType::Regtest)
                 .expect("Failed to derive regtest keys");
             assert_eq!(
-                keys1.f1r3fly_public_key,
-                regtest_keys.f1r3fly_public_key,
+                keys1.f1r3fly_public_key, regtest_keys.f1r3fly_public_key,
                 "F1r3fly key should be network-independent"
             );
         }
@@ -485,14 +500,11 @@ fn test_wallet_keys_derivation_is_deterministic_across_networks() {
         .expect("Failed to derive keys from original mnemonic");
 
     assert_ne!(
-        different_keys.bitcoin_descriptor,
-        original_keys.bitcoin_descriptor,
+        different_keys.bitcoin_descriptor, original_keys.bitcoin_descriptor,
         "Different mnemonics should produce different Bitcoin descriptors"
     );
     assert_ne!(
-        different_keys.f1r3fly_public_key,
-        original_keys.f1r3fly_public_key,
+        different_keys.f1r3fly_public_key, original_keys.f1r3fly_public_key,
         "Different mnemonics should produce different F1r3fly keys"
     );
 }
-

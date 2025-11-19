@@ -32,4 +32,3 @@ pub fn init(network: Option<String>) -> Result<(), ConfigError> {
 
     Ok(())
 }
-

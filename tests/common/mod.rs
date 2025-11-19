@@ -43,14 +43,20 @@ impl BitcoinRpcClient {
     }
 
     /// Execute bitcoin-cli command
-    /// 
+    ///
     /// Supports both local and Docker environments:
     /// - If Bitcoin is in Docker (CI or docker-compose), use docker exec
     /// - Otherwise, use local bitcoin-cli with datadir
     fn execute_cli(&self, args: &[&str]) -> Result<String, String> {
         // Check if we should use Docker (bitcoin-test container exists)
         let use_docker = Command::new("docker")
-            .args(["ps", "--filter", "name=bitcoind-test", "--format", "{{.Names}}"])
+            .args([
+                "ps",
+                "--filter",
+                "name=bitcoind-test",
+                "--format",
+                "{{.Names}}",
+            ])
             .output()
             .ok()
             .and_then(|output| {
@@ -62,7 +68,14 @@ impl BitcoinRpcClient {
         let output = if use_docker {
             // Use docker exec to run bitcoin-cli inside the container
             let mut cmd = Command::new("docker");
-            cmd.args(["exec", "bitcoind-test", "bitcoin-cli", "-regtest", "-rpcuser=user", "-rpcpassword=password"]);
+            cmd.args([
+                "exec",
+                "bitcoind-test",
+                "bitcoin-cli",
+                "-regtest",
+                "-rpcuser=user",
+                "-rpcpassword=password",
+            ]);
             for arg in args {
                 cmd.arg(arg);
             }
@@ -273,12 +286,10 @@ impl TestBitcoinEnv {
         self.wallets_dir.join(name)
     }
 
-
     /// Get global config
     pub fn config(&self) -> &GlobalConfig {
         &self.config
     }
-
 
     /// Mine N blocks to default mining address
     ///
@@ -365,9 +376,10 @@ impl TestBitcoinEnv {
         let txid_parsed: bdk_wallet::bitcoin::Txid =
             txid.parse().map_err(|e| format!("Invalid txid: {}", e))?;
 
-        // Poll with retries
-        let max_retries = 30;
-        let retry_delay = Duration::from_millis(300);
+        // Poll with retries (generous timeout for CI environments)
+        // Esplora indexing can be slow under load, especially in CI
+        let max_retries = 60; // Increased from 30 for flaky CI environments
+        let retry_delay = Duration::from_millis(500); // Increased from 300ms
 
         for attempt in 1..=max_retries {
             tokio::time::sleep(retry_delay).await;
@@ -414,7 +426,8 @@ impl TestBitcoinEnv {
     ///
     /// New regtest address from mining wallet
     pub fn get_new_test_address(&self) -> Result<String, String> {
-        self.bitcoin_rpc.execute_cli(&["-rpcwallet=mining_wallet", "getnewaddress", "", "bech32"])
+        self.bitcoin_rpc
+            .execute_cli(&["-rpcwallet=mining_wallet", "getnewaddress", "", "bech32"])
     }
 
     /// Get Bitcoin RPC client
@@ -429,7 +442,7 @@ impl Drop for TestBitcoinEnv {
     /// Note: Bitcoin regtest state persists (by design, it's a shared resource)
     fn drop(&mut self) {
         // TempDir auto-cleanup handles wallet directory removal
-        
+
         // Suppress "never read/used" warnings - these ARE used in test files
         // but Rust's linter checks modules in isolation
         let _ = &self.esplora_client;

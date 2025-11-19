@@ -92,8 +92,7 @@ impl EsploraClient {
         network: NetworkType,
         timeout: Duration,
     ) -> Result<Self, NetworkError> {
-        let builder = esplora_client::Builder::new(url)
-            .timeout(timeout.as_secs());
+        let builder = esplora_client::Builder::new(url).timeout(timeout.as_secs());
         let client = BlockingClient::from_builder(builder);
 
         Ok(Self {
@@ -218,4 +217,3 @@ impl std::fmt::Debug for EsploraClient {
             .finish()
     }
 }
-

@@ -224,7 +224,8 @@ pub async fn issue_asset(
         request.genesis_utxo
     );
 
-    // Parse and normalize the genesis UTXO format
+    // Parse and normalize the genesis UTXO format to internal Bitcoin representation
+    // RGB tracks balances by actual Bitcoin UTXO identifiers (txid:vout)
     let normalized_genesis_seal = {
         let parts: Vec<&str> = request.genesis_utxo.split(':').collect();
         if parts.len() != 2 {
@@ -258,7 +259,7 @@ pub async fn issue_asset(
     };
 
     log::info!(
-        "Normalized genesis seal for contract: {}",
+        "Normalized genesis UTXO for contract: {}",
         normalized_genesis_seal
     );
 
@@ -270,7 +271,10 @@ pub async fn issue_asset(
             contract_id,
             "issue",
             &[
-                ("recipient", StrictVal::from(normalized_genesis_seal)),
+                (
+                    "recipient",
+                    StrictVal::from(normalized_genesis_seal.as_str()),
+                ),
                 ("amount", StrictVal::from(request.supply)),
             ],
         )
@@ -327,7 +331,21 @@ pub async fn issue_asset(
 
     // Store genesis UTXO info for future seal registration (Phase 3: Transfers)
     // This will be used during transfer operations to properly register seals with tracker
-    use crate::f1r3fly::GenesisUtxoInfo;
+    use crate::f1r3fly::{GenesisExecutionData, GenesisUtxoInfo};
+
+    // Store execution result for genesis consignment creation
+    let genesis_execution_data = GenesisExecutionData {
+        opid: hex::encode(&issue_result.opid),
+        deploy_id: issue_result
+            .deploy_id_string()
+            .map_err(|e| AssetError::DeploymentFailed(format!("Invalid deploy ID: {}", e)))?,
+        finalized_block_hash: issue_result
+            .block_hash_string()
+            .map_err(|e| AssetError::DeploymentFailed(format!("Invalid block hash: {}", e)))?,
+        state_hash: issue_result.state_hash,
+        rholang_source: String::from_utf8(issue_result.rholang_source.to_vec())
+            .map_err(|e| AssetError::DeploymentFailed(format!("Invalid Rholang source: {}", e)))?,
+    };
 
     let genesis_info = GenesisUtxoInfo {
         contract_id: contract_id.to_string(),
@@ -337,6 +355,7 @@ pub async fn issue_asset(
         name: name.clone(),
         supply,
         precision,
+        genesis_execution_result: Some(genesis_execution_data),
     };
 
     // Add to contracts manager and persist

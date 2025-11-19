@@ -156,6 +156,42 @@ fn main() {
             None => Err("Wallet name required (use --wallet <name>)".into()),
         },
 
+        Commands::GenerateInvoice {
+            contract_id,
+            amount,
+            address,
+            password,
+        } => match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt
+                .block_on(commands::generate_invoice_cmd(
+                    cli.wallet,
+                    contract_id,
+                    amount,
+                    address,
+                    password,
+                    overrides,
+                ))
+                .map_err(Into::into),
+            Err(e) => Err(format!("Failed to create async runtime: {}", e).into()),
+        },
+
+        Commands::ParseInvoice { invoice, network } => {
+            let net = network.as_ref().and_then(|n| match n.as_str() {
+                "regtest" => Some(NetworkType::Regtest),
+                "signet" => Some(NetworkType::Signet),
+                "testnet" => Some(NetworkType::Testnet),
+                "mainnet" => Some(NetworkType::Mainnet),
+                _ => None,
+            });
+
+            match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt
+                    .block_on(commands::parse_invoice_cmd(invoice, net))
+                    .map_err(Into::into),
+                Err(e) => Err(format!("Failed to create async runtime: {}", e).into()),
+            }
+        }
+
         Commands::ListUtxos {
             available_only,
             rgb_only,

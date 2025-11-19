@@ -19,4 +19,3 @@ pub use utxo::{
     UtxoOperationResult,
 };
 pub use wallet::{BitcoinWallet, BitcoinWalletError};
-

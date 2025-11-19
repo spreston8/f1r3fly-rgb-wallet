@@ -26,11 +26,14 @@ cargo test -- --test-threads=1
 cargo test --test keys_test
 cargo test --test storage_test
 
-# Bitcoin integration tests (requires regtest, can run in parallel)
-cargo test --test bitcoin_integration_tests
+# Bitcoin integration tests (requires regtest, must run sequentially)
+cargo test --test bitcoin_integration_tests -- --test-threads=1
 
 # F1r3fly-RGB tests (requires regtest + F1r3node, must run sequentially)
 cargo test --test f1r3fly_integration_tests -- --test-threads=1
+
+# List UTXOs integration tests (requires regtest + F1r3node, can run in parallel)
+cargo test --test list_utxos_integration_test
 
 # Unit tests
 cargo test --lib
@@ -39,7 +42,7 @@ cargo test --lib
 cargo test test_create_wallet
 ```
 
-**Note**: F1r3fly-RGB integration tests must run with `--test-threads=1` due to shared F1r3node state.
+**Note**: Bitcoin and F1r3fly-RGB integration tests must run with `--test-threads=1` due to shared blockchain state.
 
 ## CLI Usage
 

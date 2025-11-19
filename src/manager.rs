@@ -1021,6 +1021,257 @@ impl WalletManager {
 
         Ok(filtered_utxos)
     }
+
+    /// Send RGB asset transfer
+    ///
+    /// Executes a complete RGB transfer flow:
+    /// 1. Parse invoice and validate
+    /// 2. Execute F1r3fly contract transfer
+    /// 3. Build and broadcast Bitcoin witness transaction
+    /// 4. Create and save consignment
+    /// 5. Update wallet state
+    ///
+    /// # Arguments
+    ///
+    /// * `invoice_str` - RGB invoice string from recipient
+    /// * `fee_rate` - Bitcoin transaction fee rate
+    ///
+    /// # Returns
+    ///
+    /// `TransferResponse` with transaction ID and consignment details
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Wallet not loaded
+    /// - Invoice invalid
+    /// - Insufficient balance
+    /// - Transaction fails
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let invoice = "rgb:...";
+    /// let fee_rate = FeeRateConfig::medium_priority();
+    /// let response = manager.send_transfer(invoice, &fee_rate).await?;
+    /// println!("Transfer sent: {}", response.bitcoin_txid);
+    /// println!("Consignment: {}", response.consignment_path.display());
+    /// ```
+    pub async fn send_transfer(
+        &mut self,
+        invoice_str: &str,
+        fee_rate: &FeeRateConfig,
+    ) -> Result<crate::f1r3fly::TransferResponse, ManagerError> {
+        let bitcoin_wallet = self
+            .bitcoin_wallet
+            .as_mut()
+            .ok_or(ManagerError::WalletNotLoaded)?;
+
+        let contracts_manager = self
+            .f1r3fly_contracts
+            .as_mut()
+            .ok_or(ManagerError::F1r3flyNotInitialized)?;
+
+        // Get wallet directory for consignments
+        let wallet_name = self
+            .wallet_metadata
+            .as_ref()
+            .ok_or(ManagerError::WalletNotLoaded)?
+            .name
+            .clone();
+
+        // Construct wallet directory path
+        let wallets_base = if let Some(dir_str) = &self.config.wallets_dir {
+            std::path::PathBuf::from(dir_str)
+        } else {
+            std::path::PathBuf::from(".f1r3fly-rgb-wallet/wallets")
+        };
+
+        let wallet_dir = wallets_base.join(&wallet_name);
+
+        // VALIDATE: Wallet directory must exist (wallet is loaded)
+        if !wallet_dir.exists() {
+            return Err(ManagerError::FileSystem(FileSystemError::WalletNotFound(
+                format!(
+                    "Wallet directory not found: {}. Wallet state may be corrupted.",
+                    wallet_dir.display()
+                ),
+            )));
+        }
+
+        // Consignments subdirectory (will be created if needed during transfer)
+        let consignments_dir = wallet_dir.join("consignments");
+
+        // CRITICAL SAFETY: Check if any UTXOs are RGB-occupied
+        if !self.rgb_occupied.is_empty() {
+            log::warn!(
+                "⚠️  Wallet contains {} RGB-occupied UTXO(s). These will be protected during transfer.",
+                self.rgb_occupied.len()
+            );
+        }
+
+        // Execute transfer
+        let response = crate::f1r3fly::send_transfer(
+            bitcoin_wallet,
+            &self.esplora_client,
+            contracts_manager,
+            invoice_str,
+            fee_rate,
+            consignments_dir,
+            &self.rgb_occupied,
+        )
+        .await
+        .map_err(|e| {
+            ManagerError::Asset(crate::f1r3fly::AssetError::F1r3flyRgb(
+                f1r3fly_rgb::F1r3flyRgbError::InvalidResponse(format!("Transfer failed: {}", e)),
+            ))
+        })?;
+
+        Ok(response)
+    }
+
+    /// Export genesis consignment for an issued asset
+    ///
+    /// Creates a genesis consignment that can be sent to recipients to enable
+    /// them to receive transfers of this asset.
+    ///
+    /// # Arguments
+    ///
+    /// * `wallet_name` - Name of the wallet containing the contract
+    /// * `contract_id` - Contract ID to export genesis for
+    ///
+    /// # Returns
+    ///
+    /// `ExportGenesisResponse` with consignment file path and metadata
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use f1r3fly_rgb_wallet::manager::WalletManager;
+    /// # async fn example(manager: &mut WalletManager) -> Result<(), Box<dyn std::error::Error>> {
+    /// let response = manager.export_genesis(
+    ///     "my-wallet",
+    ///     "contract_abc123...",
+    /// ).await?;
+    ///
+    /// println!("Genesis exported: {}", response.consignment_path.display());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn export_genesis(
+        &mut self,
+        contract_id: &str,
+    ) -> Result<crate::f1r3fly::ExportGenesisResponse, ManagerError> {
+        // Wallet must be loaded
+        let contracts_manager = self
+            .f1r3fly_contracts
+            .as_mut()
+            .ok_or(ManagerError::WalletNotLoaded)?;
+
+        let metadata = self
+            .wallet_metadata
+            .as_ref()
+            .ok_or(ManagerError::WalletNotLoaded)?;
+
+        // Get wallet directory for consignments
+        let wallets_base = if let Some(dir_str) = &self.config.wallets_dir {
+            std::path::PathBuf::from(dir_str)
+        } else {
+            std::path::PathBuf::from(".f1r3fly-rgb-wallet/wallets")
+        };
+
+        let wallet_dir = wallets_base.join(&metadata.name);
+
+        // VALIDATE: Wallet directory must exist
+        if !wallet_dir.exists() {
+            return Err(ManagerError::WalletNotLoaded);
+        }
+
+        // Consignments subdirectory
+        let consignments_dir = wallet_dir.join("consignments");
+
+        // Export genesis
+        let response = crate::f1r3fly::export_genesis(
+            contracts_manager,
+            &self.esplora_client,
+            contract_id,
+            consignments_dir,
+        )
+        .await
+        .map_err(|e| {
+            ManagerError::Asset(crate::f1r3fly::AssetError::F1r3flyRgb(
+                f1r3fly_rgb::F1r3flyRgbError::InvalidResponse(format!(
+                    "Export genesis failed: {}",
+                    e
+                )),
+            ))
+        })?;
+
+        Ok(response)
+    }
+
+    /// Accept received consignment
+    ///
+    /// Validates and imports a consignment from another party, enabling the wallet
+    /// to receive transfers of the asset.
+    ///
+    /// Performs:
+    /// - F1r3node block finalization check
+    /// - Tapret proof verification
+    /// - Seal validation
+    /// - Contract import
+    /// - State persistence
+    ///
+    /// # Arguments
+    ///
+    /// * `wallet_name` - Name of the wallet to import into
+    /// * `consignment_path` - Path to consignment file
+    ///
+    /// # Returns
+    ///
+    /// `AcceptConsignmentResponse` with imported contract details
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use f1r3fly_rgb_wallet::manager::WalletManager;
+    /// # async fn example(manager: &mut WalletManager) -> Result<(), Box<dyn std::error::Error>> {
+    /// let response = manager.accept_consignment(
+    ///     "my-wallet",
+    ///     "/path/to/consignment.json",
+    /// ).await?;
+    ///
+    /// println!("Accepted: {} {}", response.ticker, response.name);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn accept_consignment(
+        &mut self,
+        consignment_path: &str,
+    ) -> Result<crate::f1r3fly::AcceptConsignmentResponse, ManagerError> {
+        // Wallet must be loaded
+        let contracts_manager = self
+            .f1r3fly_contracts
+            .as_mut()
+            .ok_or(ManagerError::WalletNotLoaded)?;
+
+        // Accept consignment
+        let response = crate::f1r3fly::accept_consignment(
+            contracts_manager,
+            std::path::Path::new(consignment_path),
+        )
+        .await
+        .map_err(|e| {
+            ManagerError::Asset(crate::f1r3fly::AssetError::F1r3flyRgb(
+                f1r3fly_rgb::F1r3flyRgbError::InvalidResponse(format!(
+                    "Accept consignment failed: {}",
+                    e
+                )),
+            ))
+        })?;
+
+        Ok(response)
+    }
 }
 
 /// Apply filters to a list of UTXOs

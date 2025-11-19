@@ -56,7 +56,10 @@ pub fn wallets_dir(custom_dir: Option<&str>) -> Result<PathBuf, FileSystemError>
 /// * `custom_base` - Optional custom base directory (for testing)
 ///
 /// Returns: `<base>/wallets/<wallet_name>/` or `~/.f1r3fly-rgb-wallet/wallets/<wallet_name>/`
-pub fn wallet_dir(wallet_name: &str, custom_base: Option<&str>) -> Result<PathBuf, FileSystemError> {
+pub fn wallet_dir(
+    wallet_name: &str,
+    custom_base: Option<&str>,
+) -> Result<PathBuf, FileSystemError> {
     Ok(wallets_dir(custom_base)?.join(wallet_name))
 }
 
@@ -82,7 +85,10 @@ pub fn wallet_dir(wallet_name: &str, custom_base: Option<&str>) -> Result<PathBu
 /// ```ignore
 /// create_wallet_directory("my_wallet", None)?;
 /// ```
-pub fn create_wallet_directory(wallet_name: &str, custom_base: Option<&str>) -> Result<PathBuf, FileSystemError> {
+pub fn create_wallet_directory(
+    wallet_name: &str,
+    custom_base: Option<&str>,
+) -> Result<PathBuf, FileSystemError> {
     let wallet_path = wallet_dir(wallet_name, custom_base)?;
 
     // Check if wallet already exists
@@ -142,10 +148,7 @@ pub fn save_wallet(
     fs::write(wallet_path.join("wallet.json"), metadata_json)?;
 
     // 3. Save Bitcoin descriptor (for BDK)
-    fs::write(
-        wallet_path.join("descriptor.txt"),
-        &keys.bitcoin_descriptor,
-    )?;
+    fs::write(wallet_path.join("descriptor.txt"), &keys.bitcoin_descriptor)?;
 
     Ok(())
 }
@@ -247,11 +250,17 @@ pub fn list_wallets(custom_base: Option<&str>) -> Result<Vec<WalletMetadata>, Fi
                     Ok(metadata) => wallets.push(metadata),
                     Err(e) => {
                         // Log error but continue
-                        eprintln!("Warning: Failed to parse wallet metadata at {:?}: {}", path, e);
+                        eprintln!(
+                            "Warning: Failed to parse wallet metadata at {:?}: {}",
+                            path, e
+                        );
                     }
                 },
                 Err(e) => {
-                    eprintln!("Warning: Failed to read wallet metadata at {:?}: {}", path, e);
+                    eprintln!(
+                        "Warning: Failed to read wallet metadata at {:?}: {}",
+                        path, e
+                    );
                 }
             }
         }
@@ -375,4 +384,3 @@ pub fn update_wallet_metadata(
 
     Ok(())
 }
-

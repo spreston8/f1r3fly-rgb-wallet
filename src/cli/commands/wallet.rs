@@ -30,7 +30,11 @@ pub enum WalletCommandError {
 }
 
 /// Create a new wallet with a generated mnemonic
-pub fn create(name: String, password: String, overrides: ConfigOverrides) -> Result<(), WalletCommandError> {
+pub fn create(
+    name: String,
+    password: String,
+    overrides: ConfigOverrides,
+) -> Result<(), WalletCommandError> {
     // Load config
     let config = load_config(None, overrides)?;
     let network = config.bitcoin.network;
@@ -46,7 +50,7 @@ pub fn create(name: String, password: String, overrides: ConfigOverrides) -> Res
     let mnemonic = Mnemonic::from_str(&mnemonic_str)
         .map_err(|e| WalletCommandError::InvalidMnemonic(e.to_string()))?;
     let keys = WalletKeys::from_mnemonic(&mnemonic, network)?;
-    
+
     println!("✓ Wallet '{}' created successfully", name);
     println!();
     println!("  Network:           {:?}", network);
@@ -83,7 +87,7 @@ pub fn import(
     let mnemonic = Mnemonic::from_str(&mnemonic_str)
         .map_err(|e| WalletCommandError::InvalidMnemonic(e.to_string()))?;
     let keys = WalletKeys::from_mnemonic(&mnemonic, network)?;
-    
+
     println!("✓ Wallet '{}' imported successfully", name);
     println!();
     println!("  Network:           {:?}", network);
@@ -98,7 +102,7 @@ pub fn list(overrides: ConfigOverrides) -> Result<(), WalletCommandError> {
     // Load config to get wallets directory
     let config = load_config(None, overrides)?;
     let custom_base = config.wallets_dir.as_deref();
-    
+
     let wallets = list_wallets_from_fs(custom_base)?;
 
     if wallets.is_empty() {
@@ -114,7 +118,10 @@ pub fn list(overrides: ConfigOverrides) -> Result<(), WalletCommandError> {
 
     for wallet in wallets {
         println!("  {} [{}]", wallet.name, format_network(wallet.network));
-        println!("    Created: {}", wallet.created_at.format("%Y-%m-%d %H:%M:%S"));
+        println!(
+            "    Created: {}",
+            wallet.created_at.format("%Y-%m-%d %H:%M:%S")
+        );
         if let Some(last_sync) = wallet.last_sync {
             println!("    Last Sync: {}", last_sync.format("%Y-%m-%d %H:%M:%S"));
         }
@@ -132,4 +139,3 @@ fn format_network(network: NetworkType) -> &'static str {
         NetworkType::Mainnet => "Mainnet",
     }
 }
-

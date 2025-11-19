@@ -171,6 +171,36 @@ pub enum Commands {
         password: String,
     },
 
+    /// Generate RGB invoice for receiving assets
+    GenerateInvoice {
+        /// RGB contract ID
+        #[arg(short, long)]
+        contract_id: String,
+
+        /// Amount to receive (in smallest unit)
+        #[arg(short, long)]
+        amount: u64,
+
+        /// Optional: Specific Bitcoin address to use
+        #[arg(long)]
+        address: Option<String>,
+
+        /// Password to decrypt the wallet
+        #[arg(short, long)]
+        password: String,
+    },
+
+    /// Parse and display RGB invoice details
+    ParseInvoice {
+        /// RGB invoice string
+        #[arg(short, long)]
+        invoice: String,
+
+        /// Network for address display (optional)
+        #[arg(short, long)]
+        network: Option<String>,
+    },
+
     /// List all UTXOs with status and RGB occupation info
     ListUtxos {
         /// Only show available (non-RGB) UTXOs
@@ -238,4 +268,3 @@ pub enum WalletAction {
     /// List all wallets
     List,
 }
-

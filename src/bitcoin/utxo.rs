@@ -212,14 +212,16 @@ pub fn create_utxo(
     }
 
     // Get a new address to receive the UTXO
-    let address_info = wallet.inner_mut().reveal_next_address(KeychainKind::External);
+    let address_info = wallet
+        .inner_mut()
+        .reveal_next_address(KeychainKind::External);
     let address = address_info.address;
 
     // Build the transaction
     let mut tx_builder = wallet.inner_mut().build_tx();
     tx_builder.add_recipient(address.script_pubkey(), Amount::from_sat(amount));
     tx_builder.fee_rate(fee_rate.to_bdk_fee_rate());
-    
+
     // Exclude RGB-occupied UTXOs from being spent as inputs
     if let Some(rgb_set) = rgb_occupied.as_ref() {
         for occupied_outpoint in rgb_set.iter() {
@@ -246,9 +248,9 @@ pub fn create_utxo(
         .to_sat();
 
     // Extract the final transaction
-    let tx = psbt.extract_tx().map_err(|e| {
-        UtxoError::BuildFailed(format!("Failed to extract transaction: {}", e))
-    })?;
+    let tx = psbt
+        .extract_tx()
+        .map_err(|e| UtxoError::BuildFailed(format!("Failed to extract transaction: {}", e)))?;
 
     // Broadcast the transaction
     client
@@ -261,9 +263,8 @@ pub fn create_utxo(
         .output
         .iter()
         .position(|output| output.script_pubkey == address.script_pubkey())
-        .ok_or_else(|| {
-            UtxoError::BuildFailed("Could not find output in transaction".to_string())
-        })? as u32;
+        .ok_or_else(|| UtxoError::BuildFailed("Could not find output in transaction".to_string()))?
+        as u32;
 
     let txid = tx.compute_txid().to_string();
     let outpoint = OutPoint {
@@ -273,8 +274,8 @@ pub fn create_utxo(
 
     // Mark output as RGB-occupied if requested
     if mark_output_as_rgb {
-    if let Some(rgb_set) = rgb_occupied {
-        rgb_set.insert(outpoint);
+        if let Some(rgb_set) = rgb_occupied {
+            rgb_set.insert(outpoint);
         }
     }
 
@@ -341,7 +342,9 @@ pub fn unlock_utxo(
     let utxo_amount = utxo.txout.value.to_sat();
 
     // Get a new address to receive the unlocked funds
-    let address_info = wallet.inner_mut().reveal_next_address(KeychainKind::External);
+    let address_info = wallet
+        .inner_mut()
+        .reveal_next_address(KeychainKind::External);
     let address = address_info.address;
 
     // Build the transaction, manually adding the specific UTXO
@@ -372,9 +375,9 @@ pub fn unlock_utxo(
         .to_sat();
 
     // Extract the final transaction
-    let tx = psbt.extract_tx().map_err(|e| {
-        UtxoError::BuildFailed(format!("Failed to extract transaction: {}", e))
-    })?;
+    let tx = psbt
+        .extract_tx()
+        .map_err(|e| UtxoError::BuildFailed(format!("Failed to extract transaction: {}", e)))?;
 
     // Broadcast the transaction
     client
@@ -387,9 +390,8 @@ pub fn unlock_utxo(
         .output
         .iter()
         .position(|output| output.script_pubkey == address.script_pubkey())
-        .ok_or_else(|| {
-            UtxoError::BuildFailed("Could not find output in transaction".to_string())
-        })? as u32;
+        .ok_or_else(|| UtxoError::BuildFailed("Could not find output in transaction".to_string()))?
+        as u32;
 
     let txid = tx.compute_txid().to_string();
 
@@ -448,20 +450,11 @@ pub fn get_recommended_fee_rates(
 
     // Esplora returns estimates as a map of confirmation targets to fee rates (sat/vB)
     // Common targets: 1 block (high), 3 blocks (medium), 6 blocks (low)
-    let high_priority = fee_estimates
-        .get(&1)
-        .copied()
-        .unwrap_or(10.0);
-    
-    let medium_priority = fee_estimates
-        .get(&3)
-        .copied()
-        .unwrap_or(5.0);
-    
-    let low_priority = fee_estimates
-        .get(&6)
-        .copied()
-        .unwrap_or(1.0);
+    let high_priority = fee_estimates.get(&1).copied().unwrap_or(10.0);
+
+    let medium_priority = fee_estimates.get(&3).copied().unwrap_or(5.0);
+
+    let low_priority = fee_estimates.get(&6).copied().unwrap_or(1.0);
 
     Ok((
         FeeRateConfig::new(low_priority)?,
@@ -469,4 +462,3 @@ pub fn get_recommended_fee_rates(
         FeeRateConfig::new(high_priority)?,
     ))
 }
-

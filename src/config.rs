@@ -22,11 +22,11 @@ pub struct F1r3nodeConfig {
     pub grpc_port: u16,
     pub http_port: u16,
     /// Master private key for F1r3node operations (hex-encoded)
-    /// 
+    ///
     /// This key is used for:
     /// - Signing gRPC deployments (phlo payment)
     /// - Serving as the deployer identity in insertSigned
-    /// 
+    ///
     /// Must be a funded key with sufficient REV balance.
     /// Typically loaded from FIREFLY_PRIVATE_KEY environment variable.
     pub master_key: String,

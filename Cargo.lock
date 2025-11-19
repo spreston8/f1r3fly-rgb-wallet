@@ -1346,9 +1346,9 @@ dependencies = [
 [[package]]
 name = "f1r3fly-rgb"
 version = "0.1.0"
-source = "git+https://github.com/spreston8/f1r3fly-rgb?branch=master#80da8cd03c23488fab94f6f090c35a7e0462d787"
 dependencies = [
  "amplify",
+ "bitcoin",
  "blake2",
  "bp-core",
  "bp-std",
@@ -1359,10 +1359,12 @@ dependencies = [
  "log",
  "node_cli",
  "reqwest 0.11.27",
+ "rgb-invoice",
  "rgb-std",
  "secp256k1 0.28.2",
  "serde",
  "serde_json",
+ "sha2",
  "strict_encoding",
  "strict_types",
  "tokio",
@@ -1379,6 +1381,7 @@ dependencies = [
  "bip39",
  "bitcoin",
  "bp-core",
+ "bp-std",
  "chrono",
  "clap",
  "dirs",
@@ -1386,11 +1389,13 @@ dependencies = [
  "env_logger",
  "f1r3fly-rgb",
  "hex",
+ "hypersonic",
  "log",
  "node_cli",
  "pbkdf2",
  "rand 0.8.5",
  "reqwest 0.12.24",
+ "rgb-std",
  "secp256k1 0.28.2",
  "serde",
  "serde_json",
@@ -3972,6 +3977,7 @@ dependencies = [
  "getrandom 0.2.16",
  "getrandom 0.3.4",
  "indexmap 2.12.0",
+ "percent-encoding",
  "serde",
  "strict_encoding",
  "strict_types",

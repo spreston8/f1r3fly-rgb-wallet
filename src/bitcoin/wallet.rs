@@ -63,9 +63,14 @@ impl BitcoinWallet {
     ///
     /// # Arguments
     ///
-    /// * `descriptor` - BIP84 descriptor string (e.g., "wpkh(xprv.../0/*)")
+    /// * `descriptor` - BIP86 taproot descriptor string (e.g., "tr(xprv.../0/*)")
     /// * `network` - Network type (Regtest, Signet, Testnet, Mainnet)
     /// * `wallet_dir` - Directory to store wallet database (bitcoin.db)
+    ///
+    /// # Notes
+    ///
+    /// Taproot (P2TR) descriptors are required for RGB Tapret commitments.
+    /// BIP86 defines the derivation standard for single-key taproot wallets.
     ///
     /// # Example
     ///
@@ -74,7 +79,7 @@ impl BitcoinWallet {
     /// use f1r3fly_rgb_wallet::config::NetworkType;
     /// use std::path::PathBuf;
     ///
-    /// let descriptor = "wpkh(tprv8g8Po8QKfRLF3GM4PA2zFJS9LAknVwxNdgzfHzouQssRbCEvLqTWWjfpfMoRkdXy9V1puyaqnYfaSPxx2ToaC4X1qCefeyCvbu6zGzVroVZ/0/*)".to_string();
+    /// let descriptor = "tr(tprv8g8Po8QKfRLF3GM4PA2zFJS9LAknVwxNdgzfHzouQssRbCEvLqTWWjfpfMoRkdXy9V1puyaqnYfaSPxx2ToaC4X1qCefeyCvbu6zGzVroVZ/0/*)".to_string();
     /// let wallet_dir = PathBuf::from("/tmp/test_wallet");
     /// let wallet = BitcoinWallet::new(descriptor, NetworkType::Regtest, &wallet_dir)?;
     /// ```
@@ -96,8 +101,8 @@ impl BitcoinWallet {
         let mut conn = Connection::open(&db_path)?;
 
         // Create internal (change) descriptor by replacing /0/* with /1/*
-        // External descriptor format: wpkh(.../ 0/*)
-        // Internal descriptor format: wpkh(.../1/*)
+        // External descriptor format: tr(.../0/*) - receiving addresses
+        // Internal descriptor format: tr(.../1/*) - change addresses
         let internal_descriptor = descriptor.replace("/0/*", "/1/*");
 
         // Try to load existing wallet first, fallback to creating new one

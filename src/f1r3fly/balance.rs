@@ -239,7 +239,11 @@ pub async fn get_asset_balance(
                     contract_id_str
                 ))
             })?;
-        (genesis_info.ticker.clone(), genesis_info.name.clone(), genesis_info.precision)
+        (
+            genesis_info.ticker.clone(),
+            genesis_info.name.clone(),
+            genesis_info.precision,
+        )
     };
 
     // Get contract instance
@@ -248,18 +252,47 @@ pub async fn get_asset_balance(
         .get(&contract_id)
         .ok_or_else(|| BalanceError::ContractNotFound(contract_id_str.to_string()))?;
 
-    // Get all wallet UTXOs
+    // Get all wallet UTXOs and addresses for balance queries
+    // RGB tracks balances by Bitcoin UTXO identifiers, but transfers may use witness placeholders
     let utxos: Vec<_> = bitcoin_wallet.inner().list_unspent().collect();
+
+    // Get wallet addresses to check for witness identifiers
+    // Check addresses up to a reasonable limit (not just derivation_index)
+    // This handles cases where addresses were generated but wallet wasn't reloaded
+    let mut addresses = Vec::new();
+
+    // Check external (receive) addresses up to index 20
+    // This is a safe upper bound for typical wallet usage
+    for index in 0..20 {
+        let addr_info = bitcoin_wallet
+            .inner()
+            .peek_address(bdk_wallet::KeychainKind::External, index);
+        addresses.push(addr_info);
+    }
+
+    // Check internal (change) addresses up to index 10
+    for index in 0..10 {
+        let addr_info = bitcoin_wallet
+            .inner()
+            .peek_address(bdk_wallet::KeychainKind::Internal, index);
+        addresses.push(addr_info);
+    }
 
     let mut utxo_balances = Vec::new();
     let mut total_balance = 0u64;
 
-    // Query balance for each UTXO
+    // Query balance for each actual UTXO
     for utxo in &utxos {
         let seal = convert_outpoint_to_seal(&utxo.outpoint)?;
 
         match contract.balance(&seal).await {
             Ok(amount) if amount > 0 => {
+                log::debug!(
+                    "UTXO {}:{} has balance: {}",
+                    utxo.outpoint.txid,
+                    utxo.outpoint.vout,
+                    amount
+                );
                 utxo_balances.push(UtxoBalance {
                     outpoint: format!("{}:{}", utxo.outpoint.txid, utxo.outpoint.vout),
                     amount,
@@ -274,6 +307,57 @@ pub async fn get_asset_balance(
                     utxo.outpoint.vout,
                     e
                 );
+            }
+        }
+    }
+
+    // ALSO query potential witness identifiers for wallet addresses
+    // Transfers to new addresses use witness placeholders until the UTXO is created
+    for addr_info in &addresses {
+        // Generate the same witness ID that would be used in a transfer
+        // CRITICAL: Must use exact same string representation as transfer.rs
+        let addr_string = addr_info.address.to_string();
+
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(addr_string.as_bytes());
+        let addr_hash = hex::encode(&hasher.finalize()[0..16]);
+
+        // Check witness ID for vout 0 (most common)
+        let witness_id = format!("witness:{}:0", addr_hash);
+
+        // Query using the executor directly since we don't have a seal object
+        match contracts_manager
+            .contracts()
+            .executor()
+            .query_state(
+                contract_id,
+                "balanceOf",
+                &[("seal", strict_types::StrictVal::from(witness_id.as_str()))],
+            )
+            .await
+        {
+            Ok(result) => {
+                let amount = result
+                    .as_u64()
+                    .or_else(|| {
+                        result
+                            .as_i64()
+                            .and_then(|n| if n >= 0 { Some(n as u64) } else { None })
+                    })
+                    .unwrap_or(0);
+
+                if amount > 0 {
+                    log::debug!("Witness ID {} has balance: {}", witness_id, amount);
+                    utxo_balances.push(UtxoBalance {
+                        outpoint: witness_id.clone(),
+                        amount,
+                    });
+                    total_balance += amount;
+                }
+            }
+            Err(e) => {
+                log::debug!("Balance query failed for witness ID {}: {}", witness_id, e);
             }
         }
     }

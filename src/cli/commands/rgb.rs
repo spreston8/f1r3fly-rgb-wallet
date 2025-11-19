@@ -221,9 +221,12 @@ pub async fn rgb_balance(
         for balance in &balances {
             println!("Asset: {} ({})", balance.name, balance.ticker);
             println!("  Contract ID: {}", balance.contract_id);
-            println!("  Total:       {}", format_amount(balance.total, balance.precision));
+            println!(
+                "  Total:       {}",
+                format_amount(balance.total, balance.precision)
+            );
             println!("  Precision:   {}", balance.precision);
-            
+
             if !balance.utxo_balances.is_empty() {
                 println!("  UTXOs:");
                 for utxo_balance in &balance.utxo_balances {
@@ -340,4 +343,3 @@ fn format_amount(amount: u64, precision: u8) -> String {
         .to_string()
     }
 }
-

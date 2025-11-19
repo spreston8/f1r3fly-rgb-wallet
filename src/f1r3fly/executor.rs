@@ -59,13 +59,13 @@ impl F1r3flyExecutorManager {
         _wallet_keys: &WalletKeys,
     ) -> Result<Self, F1r3flyExecutorError> {
         // Use master key from configuration for phlo payment and gRPC signing
-        // 
+        //
         // This key is used as:
         // - Master key: Signs gRPC deployments (pays phlo from its REV vault)
         // - Deployer identity: Public key appears in insertSigned as deployerPubKey
-        // 
+        //
         // Child keys are derived from this master for unique contract URIs.
-        // 
+        //
         // The wallet-derived F1r3fly key (from mnemonic) is reserved for future
         // wallet-specific features like authentication or namespacing.
         let f1r3fly_key_hex = config.f1r3node.master_key.clone();
@@ -110,4 +110,3 @@ impl F1r3flyExecutorManager {
         &self.connection
     }
 }
-

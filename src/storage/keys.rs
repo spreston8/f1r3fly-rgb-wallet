@@ -59,13 +59,16 @@ pub fn generate_mnemonic() -> Result<bip39::Mnemonic, KeyError> {
     bip39::Mnemonic::from_entropy(&entropy).map_err(|e| KeyError::Bip39(e.to_string()))
 }
 
-/// Derive Bitcoin keys from mnemonic using BIP32 at path m/84'/x'/0'
+/// Derive Bitcoin keys from mnemonic using BIP32 at path m/86'/x'/0'
 ///
-/// Uses BIP84 derivation path for native segwit (P2WPKH):
-/// - Mainnet: m/84'/0'/0'
-/// - Testnet: m/84'/1'/0'
-/// - Signet: m/84'/1'/0' (uses testnet coin type)
-/// - Regtest: m/84'/1'/0' (uses testnet coin type)
+/// Uses BIP86 derivation path for taproot (P2TR):
+/// - Mainnet: m/86'/0'/0'
+/// - Testnet: m/86'/1'/0'
+/// - Signet: m/86'/1'/0' (uses testnet coin type)
+/// - Regtest: m/86'/1'/0' (uses testnet coin type)
+///
+/// BIP86 is specifically designed for single-key P2TR (Pay-to-Taproot) outputs,
+/// which are required for RGB Tapret commitments.
 ///
 /// # Arguments
 ///
@@ -102,14 +105,14 @@ pub fn derive_bitcoin_keys(
     let master_key = Xpriv::new_master(btc_network, &seed)
         .map_err(|e| KeyError::Bip32(format!("Failed to create master key: {}", e)))?;
 
-    // BIP84 path: m/84'/coin_type'/0'
+    // BIP86 path: m/86'/coin_type'/0'
     // coin_type: 0 for mainnet, 1 for testnet/signet/regtest
     let coin_type = match network {
         NetworkType::Mainnet => "0",
         NetworkType::Testnet | NetworkType::Signet | NetworkType::Regtest => "1",
     };
 
-    let path_str = format!("m/84'/{}'/{}'", coin_type, 0);
+    let path_str = format!("m/86'/{}'/{}'", coin_type, 0);
     let derivation_path = DerivationPath::from_str(&path_str)
         .map_err(|e| KeyError::Bip32(format!("Invalid derivation path: {}", e)))?;
 

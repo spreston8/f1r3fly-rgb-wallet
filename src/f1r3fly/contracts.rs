@@ -9,10 +9,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 // Re-exports from f1r3fly-rgb
-use f1r3fly_rgb::{
-    BitcoinAnchorTracker, ContractMetadata, F1r3flyRgbContracts,
-    TxoSeal,
-};
+use f1r3fly_rgb::{BitcoinAnchorTracker, ContractMetadata, F1r3flyRgbContracts, TxoSeal};
 
 use crate::f1r3fly::executor::F1r3flyExecutorManager;
 
@@ -62,6 +59,30 @@ pub struct GenesisUtxoInfo {
 
     /// Decimal precision
     pub precision: u8,
+
+    /// F1r3fly execution result from genesis (issue operation)
+    /// Required for creating valid genesis consignments
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genesis_execution_result: Option<GenesisExecutionData>,
+}
+
+/// Serializable subset of F1r3flyExecutionResult for genesis storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenesisExecutionData {
+    /// RGB operation ID
+    pub opid: String,
+
+    /// F1r3fly deploy ID
+    pub deploy_id: String,
+
+    /// Finalized block hash
+    pub finalized_block_hash: String,
+
+    /// State hash (32 bytes)
+    pub state_hash: [u8; 32],
+
+    /// Rholang source code
+    pub rholang_source: String,
 }
 
 /// Persistent state for F1r3fly contracts
@@ -237,33 +258,35 @@ impl F1r3flyContractsManager {
         // so that query_state() can find the registry URIs
         use std::str::FromStr;
         for (contract_id_str, metadata) in &state.contracts_metadata {
-            let contract_id = f1r3fly_rgb::ContractId::from_str(contract_id_str)
-                .map_err(|e| ContractsManagerError::InvalidState(
-                    format!("Invalid contract ID in state: {}", e)
-                ))?;
+            let contract_id = f1r3fly_rgb::ContractId::from_str(contract_id_str).map_err(|e| {
+                ContractsManagerError::InvalidState(format!("Invalid contract ID in state: {}", e))
+            })?;
             executor.register_contract(contract_id, metadata.clone());
         }
 
         // Create contracts instance
         let mut contracts = F1r3flyRgbContracts::new(executor);
-        
+
         // Recreate contract instances and add to collection
         // This populates the contracts HashMap so list() returns the loaded contracts
         for (contract_id_str, metadata) in &state.contracts_metadata {
-            let contract_id = f1r3fly_rgb::ContractId::from_str(contract_id_str)
-                .map_err(|e| ContractsManagerError::InvalidState(
-                    format!("Invalid contract ID in state: {}", e)
-                ))?;
-            
+            let contract_id = f1r3fly_rgb::ContractId::from_str(contract_id_str).map_err(|e| {
+                ContractsManagerError::InvalidState(format!("Invalid contract ID in state: {}", e))
+            })?;
+
             // Create contract instance with cloned executor
             let contract = f1r3fly_rgb::F1r3flyRgbContract::new(
                 contract_id,
                 contracts.executor().clone(),
                 metadata.clone(),
-            ).map_err(|e| ContractsManagerError::InvalidState(
-                format!("Failed to create contract instance: {}", e)
-            ))?;
-            
+            )
+            .map_err(|e| {
+                ContractsManagerError::InvalidState(format!(
+                    "Failed to create contract instance: {}",
+                    e
+                ))
+            })?;
+
             // Add to collection
             contracts.register_loaded_contract(contract_id, contract);
         }
@@ -271,8 +294,9 @@ impl F1r3flyContractsManager {
         // Restore tracker state if available
         let tracker = if let Some(tracker_json) = state.tracker_state {
             // Deserialize tracker from JSON
-            serde_json::from_value(tracker_json)
-                .map_err(|e| ContractsManagerError::InvalidState(format!("Failed to deserialize tracker: {}", e)))?
+            serde_json::from_value(tracker_json).map_err(|e| {
+                ContractsManagerError::InvalidState(format!("Failed to deserialize tracker: {}", e))
+            })?
         } else {
             BitcoinAnchorTracker::new()
         };
@@ -414,7 +438,8 @@ impl F1r3flyContractsManager {
     ///
     /// * `genesis_info` - Genesis UTXO information to store
     pub fn add_genesis_utxo(&mut self, genesis_info: GenesisUtxoInfo) {
-        self.genesis_utxos.insert(genesis_info.contract_id.clone(), genesis_info);
+        self.genesis_utxos
+            .insert(genesis_info.contract_id.clone(), genesis_info);
     }
 
     /// Get genesis UTXO information for a contract
@@ -435,4 +460,3 @@ impl F1r3flyContractsManager {
         &self.genesis_utxos
     }
 }
-

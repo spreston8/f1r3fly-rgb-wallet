@@ -61,8 +61,9 @@ impl WalletKeys {
         // Derive Bitcoin keys
         let bitcoin_xprv = crate::storage::keys::derive_bitcoin_keys(mnemonic, network)?;
 
-        // Create descriptor for BDK
-        let bitcoin_descriptor = format!("wpkh({}/0/*)", bitcoin_xprv);
+        // Create taproot descriptor for BDK (BIP86)
+        // tr(...) format is required for Tapret commitments in RGB protocol
+        let bitcoin_descriptor = format!("tr({}/0/*)", bitcoin_xprv);
 
         // Derive F1r3fly keys
         let (f1r3fly_private_key, f1r3fly_public_key) =
@@ -80,7 +81,10 @@ impl WalletKeys {
     /// Get the first Bitcoin address (for display purposes)
     ///
     /// Derives the first receive address (m/84'/coin_type'/0'/0/0)
-    pub fn first_address(&self, network: NetworkType) -> Result<String, crate::storage::keys::KeyError> {
+    pub fn first_address(
+        &self,
+        network: NetworkType,
+    ) -> Result<String, crate::storage::keys::KeyError> {
         use bitcoin::bip32::DerivationPath;
         use std::str::FromStr;
 
@@ -88,15 +92,15 @@ impl WalletKeys {
         let path = DerivationPath::from_str("m/0/0")
             .map_err(|e| crate::storage::keys::KeyError::Bip32(e.to_string()))?;
 
-        let child_key = self.bitcoin_xprv.derive_priv(&secp, &path)
+        let child_key = self
+            .bitcoin_xprv
+            .derive_priv(&secp, &path)
             .map_err(|e| crate::storage::keys::KeyError::Bip32(e.to_string()))?;
 
         let secp_pubkey = child_key.private_key.public_key(&secp);
-        
-        // Convert to bitcoin::PublicKey then to CompressedPublicKey
+
+        // Convert to bitcoin::PublicKey for taproot (BIP86 key-spend path)
         let bitcoin_pubkey = bitcoin::PublicKey::new(secp_pubkey);
-        let compressed = bitcoin::key::CompressedPublicKey::try_from(bitcoin_pubkey)
-            .map_err(|e| crate::storage::keys::KeyError::Bip32(e.to_string()))?;
 
         // Map NetworkType to bitcoin::Network
         let btc_network = match network {
@@ -106,7 +110,10 @@ impl WalletKeys {
             NetworkType::Regtest => bitcoin::Network::Regtest,
         };
 
-        let address = bitcoin::Address::p2wpkh(&compressed, btc_network);
+        // Create taproot address using untweaked public key (BIP86 key-spend only)
+        // This generates P2TR addresses (bc1p..., tb1p..., bcrt1p...)
+        // Convert to x-only public key (taproot uses only the x-coordinate)
+        let address = bitcoin::Address::p2tr(&secp, bitcoin_pubkey.inner.into(), None, btc_network);
 
         Ok(address.to_string())
     }
@@ -256,4 +263,3 @@ impl EncryptedWalletKeys {
         })
     }
 }
-

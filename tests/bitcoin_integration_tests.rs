@@ -15,6 +15,5 @@
 //! cargo test --test bitcoin_integration_tests -- --nocapture
 //! ```
 
-mod common;
 mod bitcoin;
-
+mod common;
