@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 # F1r3fly-RGB
-f1r3fly-rgb = { path = "../f1r3fly-rgb" }
+f1r3fly-rgb = { git = "https://github.com/spreston8/f1r3fly-rgb", branch = "master" }
 node_cli = { git = "https://github.com/F1R3FLY-io/rust-client", branch = "rgb" }
 
 # RGB / Bitcoin primitives
