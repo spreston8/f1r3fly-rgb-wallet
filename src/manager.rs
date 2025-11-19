@@ -726,7 +726,45 @@ impl WalletManager {
             .as_ref()
             .ok_or(ManagerError::WalletNotLoaded)?;
 
+        // Store genesis_utxo before moving request
+        let genesis_utxo_str = request.genesis_utxo.clone();
+
         let asset_info = issue_asset(contracts_manager, bitcoin_wallet, request).await?;
+
+        // CRITICAL: Mark genesis UTXO as RGB-occupied to prevent accidental spending
+        // Parse genesis UTXO format: "txid:vout"
+        let parts: Vec<&str> = genesis_utxo_str.split(':').collect();
+        if parts.len() != 2 {
+            return Err(ManagerError::Asset(crate::f1r3fly::asset::AssetError::DeploymentFailed(
+                format!(
+                    "Invalid genesis UTXO format '{}' after issuance - cannot protect from spending",
+                    genesis_utxo_str
+                )
+            )));
+        }
+
+        let txid = parts[0].parse::<bdk_wallet::bitcoin::Txid>().map_err(|e| {
+            ManagerError::Asset(crate::f1r3fly::asset::AssetError::DeploymentFailed(format!(
+                "Failed to parse genesis UTXO txid '{}' after issuance - cannot protect from spending: {}",
+                genesis_utxo_str, e
+            )))
+        })?;
+
+        let vout = parts[1].parse::<u32>().map_err(|e| {
+            ManagerError::Asset(crate::f1r3fly::asset::AssetError::DeploymentFailed(format!(
+                "Failed to parse genesis UTXO vout '{}' after issuance - cannot protect from spending: {}",
+                genesis_utxo_str, e
+            )))
+        })?;
+
+        let outpoint = bdk_wallet::bitcoin::OutPoint { txid, vout };
+        self.rgb_occupied.insert(outpoint);
+        log::info!(
+            "Marked genesis UTXO as RGB-occupied: {}:{} (contract: {})",
+            txid,
+            vout,
+            asset_info.contract_id
+        );
 
         // Persist state to disk after issuing asset
         contracts_manager.save_state()?;

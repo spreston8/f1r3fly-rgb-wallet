@@ -1,14 +1,6 @@
 # f1r3fly-rgb-wallet
 
-CLI wallet for managing Bitcoin and F1r3fly-RGB assets with hierarchical deterministic key management.
-
-## Features
-
-- **Bitcoin Wallet**: BDK-based Bitcoin wallet with regtest/testnet/mainnet support
-- **RGB Asset Management**: Issue and manage RGB assets on F1r3fly
-- **Key Management**: BIP39 mnemonic with encrypted storage (AES-256-GCM + PBKDF2)
-- **CLI Interface**: Commands for wallet operations, balance queries, and asset issuance
-- **Test Environment**: Comprehensive integration tests with Bitcoin regtest
+CLI wallet for managing Bitcoin and F1r3fly-RGB assets.
 
 ## Running Tests
 
@@ -37,12 +29,7 @@ cargo test --test list_utxos_integration_test -- --test-threads=1 test_bitcoin_l
 
 # Unit tests
 cargo test --lib
-
-# Specific test
-cargo test test_create_wallet
 ```
-
-**Note**: Bitcoin and F1r3fly-RGB integration tests must run with `--test-threads=1` due to shared blockchain state.
 
 ## CLI Usage
 
