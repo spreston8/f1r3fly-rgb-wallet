@@ -92,6 +92,7 @@ pub struct GenesisExecutionData {
 /// - Contract metadata (registry URIs, methods, Rholang source)
 /// - Genesis UTXO information for seal registration during transfers
 /// - Bitcoin anchor tracker state (seals, witnesses, anchors)
+/// - Contract derivation indices for signature generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct F1r3flyState {
     /// Current derivation index for BIP32-style contract key derivation
@@ -111,6 +112,12 @@ pub struct F1r3flyState {
     /// This is stored as a JSON value to avoid complex type parameters in serialization
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tracker_state: Option<serde_json::Value>,
+
+    /// Map of contract ID to derivation index used for deployment
+    /// Stores the derivation_index at which each contract was deployed.
+    /// This is needed to recover the correct signing key for secured methods like issue().
+    #[serde(default)]
+    pub contract_derivation_indices: HashMap<String, u32>,
 }
 
 impl F1r3flyState {
@@ -121,6 +128,7 @@ impl F1r3flyState {
             contracts_metadata: HashMap::new(),
             genesis_utxos: HashMap::new(),
             tracker_state: None,
+            contract_derivation_indices: HashMap::new(),
         }
     }
 
@@ -175,6 +183,11 @@ pub struct F1r3flyContractsManager {
     /// Used during transfer operations (Phase 3) to register seals with tracker
     genesis_utxos: HashMap<String, GenesisUtxoInfo>,
 
+    /// Map of contract ID to derivation index used for deployment
+    /// Tracks which derivation index was used to deploy each contract.
+    /// This is needed to recover the correct signing key for secured methods like issue().
+    contract_derivation_indices: HashMap<String, u32>,
+
     /// Path to state file (f1r3fly_state.json)
     state_path: PathBuf,
 }
@@ -213,6 +226,7 @@ impl F1r3flyContractsManager {
             contracts,
             tracker,
             genesis_utxos: HashMap::new(),
+            contract_derivation_indices: HashMap::new(),
             state_path,
         })
     }
@@ -305,8 +319,72 @@ impl F1r3flyContractsManager {
             contracts,
             tracker,
             genesis_utxos: state.genesis_utxos,
+            contract_derivation_indices: state.contract_derivation_indices,
             state_path,
         })
+    }
+
+    /// Store the derivation index used for a contract deployment
+    ///
+    /// This should be called with the index that was ACTUALLY used for deployment.
+    /// Since `auto_derive` increments the index during deployment, the caller must
+    /// capture the index BEFORE calling the deployment method.
+    ///
+    /// # Arguments
+    ///
+    /// * `contract_id` - Contract ID (as string)
+    /// * `derivation_index` - The derivation index that was used for this contract's deployment
+    pub fn store_contract_derivation_index(&mut self, contract_id: &str, derivation_index: u32) {
+        log::info!(
+            "Storing derivation index {} for contract {}",
+            derivation_index,
+            contract_id
+        );
+        self.contract_derivation_indices
+            .insert(contract_id.to_string(), derivation_index);
+    }
+
+    /// Get the signing key for a contract's secured methods
+    ///
+    /// Returns the child key that was used to deploy the contract.
+    /// This key should be used to sign secured method calls like issue().
+    ///
+    /// # Arguments
+    ///
+    /// * `contract_id` - Contract ID (as string)
+    ///
+    /// # Returns
+    ///
+    /// The secp256k1 secret key for signing
+    ///
+    /// # Errors
+    ///
+    /// Returns error if contract not found or key derivation fails
+    pub fn get_contract_signing_key(
+        &self,
+        contract_id: &str,
+    ) -> Result<secp256k1::SecretKey, ContractsManagerError> {
+        // Load state to get derivation indices
+        let state = Self::load_state_from_file(&self.state_path)?;
+
+        // Get derivation index for this contract
+        let derivation_index = state
+            .contract_derivation_indices
+            .get(contract_id)
+            .ok_or_else(|| {
+                ContractsManagerError::InvalidState(format!(
+                    "No derivation index found for contract {}",
+                    contract_id
+                ))
+            })?;
+
+        // Derive child key from executor
+        self.contracts
+            .executor()
+            .get_child_key_at_index(*derivation_index)
+            .map_err(|e| {
+                ContractsManagerError::InvalidState(format!("Failed to derive signing key: {}", e))
+            })
     }
 
     /// Load state from file helper
@@ -362,12 +440,16 @@ impl F1r3flyContractsManager {
         let tracker_state = serde_json::to_value(&self.tracker)
             .map_err(|e| ContractsManagerError::Serialization(e))?;
 
+        // Use the stored derivation indices
+        let contract_derivation_indices = self.contract_derivation_indices.clone();
+
         // Create state object
         let state = F1r3flyState {
             derivation_index,
             contracts_metadata,
             genesis_utxos: self.genesis_utxos.clone(),
             tracker_state: Some(tracker_state),
+            contract_derivation_indices,
         };
 
         // Write to file

@@ -200,7 +200,18 @@ pub async fn issue_asset(
         )));
     }
 
+    // CRITICAL: Capture the derivation index BEFORE deployment
+    // The deploy_contract() method will increment this index if auto_derive is enabled,
+    // so we must capture it NOW to get the actual index used for deployment.
+    let deployment_index = contracts_manager.contracts().executor().derivation_index();
+
+    log::info!(
+        "Capturing derivation index {} before deployment (for signature generation)",
+        deployment_index
+    );
+
     // Issue asset via F1r3flyRgbContracts (deploys contract)
+    // This will use deployment_index for the child key, then increment to deployment_index+1
     let contract_id = contracts_manager
         .contracts_mut()
         .issue(
@@ -211,6 +222,9 @@ pub async fn issue_asset(
         )
         .await
         .map_err(|e| AssetError::DeploymentFailed(e.to_string()))?;
+
+    // Store the ACTUAL derivation index that was used for deployment (captured above)
+    contracts_manager.store_contract_derivation_index(&contract_id.to_string(), deployment_index);
 
     // Call the contract's issue method to assign tokens to genesis seal
     // This allocates the full supply to the genesis UTXO
@@ -263,6 +277,33 @@ pub async fn issue_asset(
         normalized_genesis_seal
     );
 
+    // Generate nonce and signature for secured issue() method
+    use f1r3fly_rgb::{generate_issue_signature, generate_nonce};
+
+    let nonce = generate_nonce();
+
+    // CRITICAL: Get the child key at the DEPLOYMENT index (not the current index!)
+    // The executor's current index has been incremented by auto_derive, so we must
+    // explicitly get the key at the deployment_index we captured earlier.
+    let child_key = contracts_manager
+        .contracts()
+        .executor()
+        .get_child_key_at_index(deployment_index)
+        .map_err(|e| AssetError::DeploymentFailed(format!("Failed to get signing key: {}", e)))?;
+
+    // Generate signature: sign(blake2b256((recipient, amount, nonce)))
+    let signature =
+        generate_issue_signature(&normalized_genesis_seal, request.supply, nonce, &child_key)
+            .map_err(|e| {
+                AssetError::DeploymentFailed(format!("Failed to generate signature: {}", e))
+            })?;
+
+    log::info!(
+        "Calling issue method with signature. Nonce: {}, Signature: {}...",
+        nonce,
+        &signature[..16]
+    );
+
     use strict_types::StrictVal;
     let issue_result = contracts_manager
         .contracts_mut()
@@ -276,6 +317,8 @@ pub async fn issue_asset(
                     StrictVal::from(normalized_genesis_seal.as_str()),
                 ),
                 ("amount", StrictVal::from(request.supply)),
+                ("nonce", StrictVal::from(nonce)),
+                ("signatureHex", StrictVal::from(signature.as_str())),
             ],
         )
         .await

@@ -52,6 +52,10 @@ log = "0.4"
 tokio = { version = "1", features = ["rt"] }
 dotenv = "0.15"                                    # Load .env files
 
+# Signature generation for secured contract methods
+blake2 = "0.10"
+prost = "0.12"
+
 [dev-dependencies]
 tempfile = "3.8"
 uuid = { version = "1.11", features = ["v4"] }

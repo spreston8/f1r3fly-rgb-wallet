@@ -26,9 +26,6 @@ cargo test --test f1r3fly_integration_tests -- --test-threads=1
 
 # List UTXOs integration tests (requires regtest + F1r3node, must run sequentially)
 cargo test --test list_utxos_integration_test -- --test-threads=1 test_bitcoin_layer_list_utxos test_rgb_layer_seal_info test_manager_orchestration_with_filters test_multiple_rgb_assets test_data_structures_and_edge_cases
-
-# Unit tests
-cargo test --lib
 ```
 
 ## CLI Usage
