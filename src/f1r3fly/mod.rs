@@ -26,8 +26,8 @@ pub use contracts::{
 };
 pub use executor::F1r3flyExecutorManager;
 pub use invoice::{
-    extract_seal_from_invoice, generate_invoice, get_address_from_invoice, parse_invoice,
-    InvoiceError,
+    extract_seal_from_invoice, generate_invoice, generate_invoice_with_pubkey,
+    get_address_from_invoice, parse_invoice, InvoiceError, InvoiceWithPubkey,
 };
 
 pub use consignment::{

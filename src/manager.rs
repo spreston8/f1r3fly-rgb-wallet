@@ -340,6 +340,16 @@ impl WalletManager {
         self.bitcoin_wallet.as_mut()
     }
 
+    /// Get reference to F1r3fly contracts manager
+    pub fn f1r3fly_contracts(&self) -> Option<&F1r3flyContractsManager> {
+        self.f1r3fly_contracts.as_ref()
+    }
+
+    /// Get mutable reference to F1r3fly contracts manager
+    pub fn f1r3fly_contracts_mut(&mut self) -> Option<&mut F1r3flyContractsManager> {
+        self.f1r3fly_contracts.as_mut()
+    }
+
     /// Check if a wallet is currently loaded
     pub fn is_wallet_loaded(&self) -> bool {
         self.bitcoin_wallet.is_some()
@@ -1060,6 +1070,57 @@ impl WalletManager {
         Ok(filtered_utxos)
     }
 
+    /// Generate RGB invoice with recipient's public key
+    ///
+    /// Generates a standard RGB invoice and includes the recipient's F1r3fly public key
+    /// for transfer authorization.
+    ///
+    /// # Arguments
+    ///
+    /// * `contract_id` - Contract ID string
+    /// * `amount` - Amount to receive
+    ///
+    /// # Returns
+    ///
+    /// `InvoiceWithPubkey` containing invoice string and recipient public key
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Wallet not loaded
+    /// - F1r3fly not initialized
+    /// - Invoice generation fails
+    pub fn generate_invoice_with_pubkey(
+        &mut self,
+        contract_id: &str,
+        amount: u64,
+    ) -> Result<crate::f1r3fly::InvoiceWithPubkey, ManagerError> {
+        let bitcoin_wallet = self
+            .bitcoin_wallet
+            .as_mut()
+            .ok_or(ManagerError::WalletNotLoaded)?;
+
+        let contracts_manager = self
+            .f1r3fly_contracts
+            .as_ref()
+            .ok_or(ManagerError::F1r3flyNotInitialized)?;
+
+        crate::f1r3fly::generate_invoice_with_pubkey(
+            bitcoin_wallet,
+            contracts_manager,
+            contract_id,
+            amount,
+        )
+        .map_err(|e| {
+            ManagerError::Asset(crate::f1r3fly::AssetError::F1r3flyRgb(
+                f1r3fly_rgb::F1r3flyRgbError::InvalidResponse(format!(
+                    "Invoice generation failed: {}",
+                    e
+                )),
+            ))
+        })
+    }
+
     /// Send RGB asset transfer
     ///
     /// Executes a complete RGB transfer flow:
@@ -1072,6 +1133,7 @@ impl WalletManager {
     /// # Arguments
     ///
     /// * `invoice_str` - RGB invoice string from recipient
+    /// * `recipient_pubkey_hex` - Recipient's F1r3fly public key (for transfer authorization)
     /// * `fee_rate` - Bitcoin transaction fee rate
     ///
     /// # Returns
@@ -1090,14 +1152,16 @@ impl WalletManager {
     ///
     /// ```ignore
     /// let invoice = "rgb:...";
+    /// let recipient_pubkey = "04f1r3fly...";
     /// let fee_rate = FeeRateConfig::medium_priority();
-    /// let response = manager.send_transfer(invoice, &fee_rate).await?;
+    /// let response = manager.send_transfer(invoice, recipient_pubkey, &fee_rate).await?;
     /// println!("Transfer sent: {}", response.bitcoin_txid);
     /// println!("Consignment: {}", response.consignment_path.display());
     /// ```
     pub async fn send_transfer(
         &mut self,
         invoice_str: &str,
+        recipient_pubkey_hex: String,
         fee_rate: &FeeRateConfig,
     ) -> Result<crate::f1r3fly::TransferResponse, ManagerError> {
         let bitcoin_wallet = self
@@ -1154,6 +1218,7 @@ impl WalletManager {
             &self.esplora_client,
             contracts_manager,
             invoice_str,
+            recipient_pubkey_hex,
             fee_rate,
             consignments_dir,
             &self.rgb_occupied,

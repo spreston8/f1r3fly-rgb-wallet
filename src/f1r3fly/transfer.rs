@@ -125,6 +125,7 @@ pub struct TransferResponse {
 /// * `esplora_client` - Esplora client for broadcasting
 /// * `contracts_manager` - F1r3fly contracts manager
 /// * `invoice_str` - RGB invoice string from recipient
+/// * `recipient_pubkey_hex` - Recipient's F1r3fly public key (for transfer authorization)
 /// * `fee_rate` - Bitcoin transaction fee rate
 /// * `consignments_dir` - Directory to save consignment files
 /// * `rgb_occupied` - Set of RGB-occupied UTXOs to protect from spending
@@ -146,6 +147,7 @@ pub async fn send_transfer(
     esplora_client: &EsploraClient,
     contracts_manager: &mut F1r3flyContractsManager,
     invoice_str: &str,
+    recipient_pubkey_hex: String,
     fee_rate: &FeeRateConfig,
     consignments_dir: PathBuf,
     rgb_occupied: &HashSet<OutPoint>,
@@ -252,16 +254,10 @@ pub async fn send_transfer(
         change_amount
     );
 
-    // Now get mutable contract reference for transfer
-    let contract = contracts_manager
-        .contracts_mut()
-        .get_mut(&parsed.contract_id)
-        .ok_or_else(|| TransferError::ContractNotFound(contract_id_str.clone()))?;
-
     // ========================================================================
-    // Step 3: Execute F1r3fly Contract Transfer Method
+    // Step 3: Prepare Transfer Parameters
     // ========================================================================
-    log::info!("📞 Step 3: Executing F1r3fly transfer method...");
+    log::info!("📞 Step 3: Preparing transfer parameters...");
 
     // Extract recipient seal from parsed invoice
     let recipient_seal = f1r3fly_rgb::extract_seal(&parsed.beneficiary)?;
@@ -319,8 +315,65 @@ pub async fn send_transfer(
     log::debug!("  From UTXO: {}", from_seal_id);
     log::debug!("  To UTXO: {}", to_seal_id);
 
+    // ========================================================================
+    // Generate Transfer Authorization Signature
+    // ========================================================================
+
+    // Generate nonce for replay protection
+    use f1r3fly_rgb::generate_nonce;
+    let transfer_nonce = generate_nonce();
+
+    // Get the contract's derivation index (used when it was deployed)
+    let contract_derivation_index = contracts_manager
+        .get_contract_derivation_index(&contract_id_str)
+        .map_err(|e| {
+            TransferError::ContractNotFound(format!(
+                "Derivation index not found for contract {}: {}",
+                contract_id_str, e
+            ))
+        })?;
+
+    // Get the child key at that index (this is the owner's signing key)
+    let signing_key = contracts_manager
+        .contracts()
+        .executor()
+        .get_child_key_at_index(contract_derivation_index)
+        .map_err(|e| TransferError::F1r3flyRgb(e))?;
+
+    // Generate transfer signature: sign(blake2b256((from, to, amount, nonce)))
+    use f1r3fly_rgb::generate_transfer_signature;
+    let transfer_signature = generate_transfer_signature(
+        &from_seal_id,
+        &to_seal_id,
+        amount,
+        transfer_nonce,
+        &signing_key,
+    )
+    .map_err(|e| {
+        TransferError::F1r3flyRgb(f1r3fly_rgb::F1r3flyRgbError::InvalidRholangSource(format!(
+            "Failed to generate transfer signature: {}",
+            e
+        )))
+    })?;
+
+    log::info!(
+        "Generated transfer signature for authorization. Nonce: {}, Signature: {}...",
+        transfer_nonce,
+        &transfer_signature[..16]
+    );
+
+    // ========================================================================
+    // Execute F1r3fly Contract Transfer Method
+    // ========================================================================
+
+    // Now get mutable contract reference for transfer
+    let contract = contracts_manager
+        .contracts_mut()
+        .get_mut(&parsed.contract_id)
+        .ok_or_else(|| TransferError::ContractNotFound(contract_id_str.clone()))?;
+
     // Call transfer method on contract
-    // The Rholang contract will deduct from genesis UTXO and add to recipient identifier
+    // The Rholang contract will verify signature, deduct from sender, and add to recipient
     let result = contract
         .call_method(
             "transfer",
@@ -328,6 +381,12 @@ pub async fn send_transfer(
                 ("from", StrictVal::from(from_seal_id.as_str())),
                 ("to", StrictVal::from(to_seal_id.as_str())),
                 ("amount", StrictVal::from(amount)),
+                ("toPubKey", StrictVal::from(recipient_pubkey_hex.as_str())),
+                ("nonce", StrictVal::from(transfer_nonce)),
+                (
+                    "fromSignatureHex",
+                    StrictVal::from(transfer_signature.as_str()),
+                ),
             ],
             seals_map.clone(),
         )

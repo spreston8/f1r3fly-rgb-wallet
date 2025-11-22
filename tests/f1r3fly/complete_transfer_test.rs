@@ -66,19 +66,12 @@ async fn test_complete_transfer_alice_to_bob() {
     // ========================================================================
     // Step 2: Bob generates invoice for 2,500 tokens
     // ========================================================================
-    let bob_bitcoin_wallet = bob
-        .bitcoin_wallet_mut()
-        .expect("Bob should have Bitcoin wallet");
+    let invoice_with_pubkey = bob
+        .generate_invoice_with_pubkey(&asset_info.contract_id, 2_500)
+        .expect("Failed to generate invoice");
 
-    let generated = f1r3fly_rgb_wallet::f1r3fly::generate_invoice(
-        bob_bitcoin_wallet,
-        &asset_info.contract_id,
-        2_500,
-        None,
-    )
-    .expect("Failed to generate invoice");
-
-    let invoice_string = generated.invoice.to_string();
+    let invoice_string = invoice_with_pubkey.invoice_string.clone();
+    let recipient_pubkey = invoice_with_pubkey.recipient_pubkey_hex.clone();
 
     // ========================================================================
     // Step 3: Alice sends transfer
@@ -86,7 +79,7 @@ async fn test_complete_transfer_alice_to_bob() {
     let fee_rate = f1r3fly_rgb_wallet::bitcoin::utxo::FeeRateConfig::medium_priority();
 
     let transfer_response = alice
-        .send_transfer(&invoice_string, &fee_rate)
+        .send_transfer(&invoice_string, recipient_pubkey, &fee_rate)
         .await
         .expect("Failed to send transfer");
 

@@ -205,25 +205,18 @@ async fn test_prevent_double_spend() {
         .expect("Failed to accept genesis");
 
     // Bob generates invoice for 5,000
-    let bob_bitcoin_wallet = bob
-        .bitcoin_wallet_mut()
-        .expect("Bob should have Bitcoin wallet");
+    let bob_invoice_data = bob
+        .generate_invoice_with_pubkey(&asset_info.contract_id, 5_000)
+        .expect("Failed to generate Bob's invoice");
 
-    let bob_generated = f1r3fly_rgb_wallet::f1r3fly::generate_invoice(
-        bob_bitcoin_wallet,
-        &asset_info.contract_id,
-        5_000,
-        None,
-    )
-    .expect("Failed to generate Bob's invoice");
-
-    let bob_invoice_string = bob_generated.invoice.to_string();
+    let bob_invoice_string = bob_invoice_data.invoice_string.clone();
+    let bob_pubkey = bob_invoice_data.recipient_pubkey_hex.clone();
 
     // Alice sends 5,000 to Bob
     let fee_rate = f1r3fly_rgb_wallet::bitcoin::utxo::FeeRateConfig::medium_priority();
 
     let transfer1 = alice
-        .send_transfer(&bob_invoice_string, &fee_rate)
+        .send_transfer(&bob_invoice_string, bob_pubkey, &fee_rate)
         .await
         .expect("Failed to send first transfer");
 
@@ -242,23 +235,18 @@ async fn test_prevent_double_spend() {
         .expect("Alice should have 5,000 tokens after first transfer");
 
     // Carol generates invoice for 6,000 (more than Alice has left)
-    let carol_bitcoin_wallet = carol
-        .bitcoin_wallet_mut()
-        .expect("Carol should have Bitcoin wallet");
+    let carol_invoice_data = carol
+        .generate_invoice_with_pubkey(&asset_info.contract_id, 6_000)
+        .expect("Failed to generate Carol's invoice");
 
-    let carol_generated = f1r3fly_rgb_wallet::f1r3fly::generate_invoice(
-        carol_bitcoin_wallet,
-        &asset_info.contract_id,
-        6_000,
-        None,
-    )
-    .expect("Failed to generate Carol's invoice");
-
-    let carol_invoice_string = carol_generated.invoice.to_string();
+    let carol_invoice_string = carol_invoice_data.invoice_string.clone();
+    let carol_pubkey = carol_invoice_data.recipient_pubkey_hex.clone();
 
     // Alice tries to send 6,000 to Carol but only has 5,000 left
     // This should FAIL due to insufficient balance
-    let result = alice.send_transfer(&carol_invoice_string, &fee_rate).await;
+    let result = alice
+        .send_transfer(&carol_invoice_string, carol_pubkey, &fee_rate)
+        .await;
 
     assert!(
         result.is_err(),

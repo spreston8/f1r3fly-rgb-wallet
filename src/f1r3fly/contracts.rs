@@ -344,6 +344,42 @@ impl F1r3flyContractsManager {
             .insert(contract_id.to_string(), derivation_index);
     }
 
+    /// Get the derivation index used for a contract's deployment
+    ///
+    /// Returns the derivation index that was used when the contract was deployed.
+    /// This is needed to retrieve the correct signing key for secured methods.
+    ///
+    /// # Arguments
+    ///
+    /// * `contract_id` - Contract ID (as string)
+    ///
+    /// # Returns
+    ///
+    /// The derivation index used for this contract
+    ///
+    /// # Errors
+    ///
+    /// Returns error if contract not found
+    pub fn get_contract_derivation_index(
+        &self,
+        contract_id: &str,
+    ) -> Result<u32, ContractsManagerError> {
+        // Load state to get derivation indices
+        let state = Self::load_state_from_file(&self.state_path)?;
+
+        // Get derivation index for this contract
+        state
+            .contract_derivation_indices
+            .get(contract_id)
+            .copied()
+            .ok_or_else(|| {
+                ContractsManagerError::InvalidState(format!(
+                    "No derivation index found for contract {}",
+                    contract_id
+                ))
+            })
+    }
+
     /// Get the signing key for a contract's secured methods
     ///
     /// Returns the child key that was used to deploy the contract.

@@ -16,6 +16,7 @@ use std::str::FromStr;
 
 use crate::bitcoin::BitcoinWallet;
 use crate::config::NetworkType;
+use crate::f1r3fly::F1r3flyContractsManager;
 
 /// Wallet-specific invoice error type
 #[derive(Debug, thiserror::Error)]
@@ -143,6 +144,80 @@ pub fn get_address_from_invoice(
     network: bitcoin::Network,
 ) -> Result<String, InvoiceError> {
     Ok(get_recipient_address(beneficiary, network)?)
+}
+
+/// Invoice with recipient's public key
+///
+/// Returns both the RGB invoice string and the recipient's F1r3fly public key.
+/// The public key is needed for transfer authorization in RHO20 contracts.
+#[derive(Debug, Clone)]
+pub struct InvoiceWithPubkey {
+    /// Standard RGB invoice string
+    pub invoice_string: String,
+    /// Recipient's F1r3fly public key (hex-encoded, uncompressed)
+    pub recipient_pubkey_hex: String,
+}
+
+/// Generate RGB invoice with recipient's public key
+///
+/// Generates a standard RGB invoice and includes the recipient's F1r3fly public key
+/// for transfer authorization. The public key is returned separately (not embedded
+/// in the invoice string) due to RGB invoice format limitations.
+///
+/// # Workflow
+///
+/// 1. Generate standard RGB invoice (amount only)
+/// 2. Get recipient's public key from F1r3fly executor
+/// 3. Return both in `InvoiceWithPubkey` struct
+///
+/// # Arguments
+///
+/// * `bitcoin_wallet` - Bitcoin wallet to get receiving address from
+/// * `contracts_manager` - F1r3fly contracts manager to get public key
+/// * `contract_id_str` - RGB contract ID as string
+/// * `amount` - Amount to receive (in smallest unit)
+///
+/// # Returns
+///
+/// `InvoiceWithPubkey` with invoice string and recipient public key
+///
+/// # Example
+///
+/// ```ignore
+/// let invoice_data = generate_invoice_with_pubkey(
+///     &mut wallet,
+///     &contracts_manager,
+///     "contract:...",
+///     1000,
+/// )?;
+///
+/// // Recipient shares both fields with sender:
+/// // - invoice_data.invoice_string (for RGB transfer)
+/// // - invoice_data.recipient_pubkey_hex (for RHO20 authorization)
+/// ```
+pub fn generate_invoice_with_pubkey(
+    bitcoin_wallet: &mut BitcoinWallet,
+    contracts_manager: &F1r3flyContractsManager,
+    contract_id_str: &str,
+    amount: u64,
+) -> Result<InvoiceWithPubkey, InvoiceError> {
+    // Generate standard RGB invoice
+    let generated = generate_invoice(bitcoin_wallet, contract_id_str, amount, None)?;
+
+    // Get recipient's F1r3fly public key from executor
+    // Each user uses their own F1r3fly key (current derivation index, typically 0)
+    let pubkey = contracts_manager
+        .contracts()
+        .executor()
+        .get_public_key()
+        .map_err(|e| InvoiceError::Core(e))?;
+
+    let pubkey_hex = hex::encode(pubkey.serialize_uncompressed());
+
+    Ok(InvoiceWithPubkey {
+        invoice_string: generated.invoice.to_string(),
+        recipient_pubkey_hex: pubkey_hex,
+    })
 }
 
 // ============================================================================

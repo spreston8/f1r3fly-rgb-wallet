@@ -154,22 +154,15 @@ async fn test_multi_party_transfer_chain() {
     // ========================================================================
     println!("\n🔀 Transfer 1: Alice → Bob (3,000 tokens)");
 
-    let bob_bitcoin_wallet = bob
-        .bitcoin_wallet_mut()
-        .expect("Bob should have Bitcoin wallet");
+    let bob_invoice_data1 = bob
+        .generate_invoice_with_pubkey(&asset_info.contract_id, 3_000)
+        .expect("Failed to generate Bob's invoice");
 
-    let bob_generated1 = f1r3fly_rgb_wallet::f1r3fly::generate_invoice(
-        bob_bitcoin_wallet,
-        &asset_info.contract_id,
-        3_000,
-        None,
-    )
-    .expect("Failed to generate Bob's invoice");
-
-    let bob_invoice1_string = bob_generated1.invoice.to_string();
+    let bob_invoice1_string = bob_invoice_data1.invoice_string.clone();
+    let bob_pubkey1 = bob_invoice_data1.recipient_pubkey_hex.clone();
 
     let transfer1 = alice
-        .send_transfer(&bob_invoice1_string, &fee_rate)
+        .send_transfer(&bob_invoice1_string, bob_pubkey1, &fee_rate)
         .await
         .expect("Failed to send transfer 1");
 
@@ -205,22 +198,15 @@ async fn test_multi_party_transfer_chain() {
     // ========================================================================
     println!("\n🔀 Transfer 2: Alice → Carol (2,000 tokens)");
 
-    let carol_bitcoin_wallet = carol
-        .bitcoin_wallet_mut()
-        .expect("Carol should have Bitcoin wallet");
+    let carol_invoice_data1 = carol
+        .generate_invoice_with_pubkey(&asset_info.contract_id, 2_000)
+        .expect("Failed to generate Carol's invoice 1");
 
-    let carol_generated1 = f1r3fly_rgb_wallet::f1r3fly::generate_invoice(
-        carol_bitcoin_wallet,
-        &asset_info.contract_id,
-        2_000,
-        None,
-    )
-    .expect("Failed to generate Carol's invoice 1");
-
-    let carol_invoice1_string = carol_generated1.invoice.to_string();
+    let carol_invoice1_string = carol_invoice_data1.invoice_string.clone();
+    let carol_pubkey1 = carol_invoice_data1.recipient_pubkey_hex.clone();
 
     let transfer2 = alice
-        .send_transfer(&carol_invoice1_string, &fee_rate)
+        .send_transfer(&carol_invoice1_string, carol_pubkey1, &fee_rate)
         .await
         .expect("Failed to send transfer 2");
 
@@ -406,20 +392,16 @@ async fn test_transfer_chain_with_explicit_sync() {
     .expect("Bob failed to accept genesis");
 
     // Transfer 1: Alice → Bob (300)
-    let bob_bitcoin_wallet = bob
-        .bitcoin_wallet_mut()
-        .expect("Bob should have Bitcoin wallet");
-
-    let bob_generated = f1r3fly_rgb_wallet::f1r3fly::generate_invoice(
-        bob_bitcoin_wallet,
-        &asset_info.contract_id,
-        300,
-        None,
-    )
-    .expect("Failed to generate invoice");
+    let bob_invoice_data = bob
+        .generate_invoice_with_pubkey(&asset_info.contract_id, 300)
+        .expect("Failed to generate invoice");
 
     let transfer1 = alice
-        .send_transfer(&bob_generated.invoice.to_string(), &fee_rate)
+        .send_transfer(
+            &bob_invoice_data.invoice_string,
+            bob_invoice_data.recipient_pubkey_hex.clone(),
+            &fee_rate,
+        )
         .await
         .expect("Failed to send transfer");
 

@@ -291,6 +291,16 @@ pub async fn issue_asset(
         .get_child_key_at_index(deployment_index)
         .map_err(|e| AssetError::DeploymentFailed(format!("Failed to get signing key: {}", e)))?;
 
+    // Get the F1r3fly public key used for this contract
+    // This is the deployer's public key, also used as the owner's public key for genesis UTXO
+    let f1r3fly_pubkey = contracts_manager
+        .contracts()
+        .executor()
+        .get_public_key_at_index(deployment_index)
+        .map_err(|e| AssetError::DeploymentFailed(format!("Failed to get public key: {}", e)))?;
+
+    let f1r3fly_pubkey_hex = hex::encode(f1r3fly_pubkey.serialize_uncompressed());
+
     // Generate signature: sign(blake2b256((recipient, amount, nonce)))
     let signature =
         generate_issue_signature(&normalized_genesis_seal, request.supply, nonce, &child_key)
@@ -317,6 +327,10 @@ pub async fn issue_asset(
                     StrictVal::from(normalized_genesis_seal.as_str()),
                 ),
                 ("amount", StrictVal::from(request.supply)),
+                (
+                    "recipientPubKey",
+                    StrictVal::from(f1r3fly_pubkey_hex.as_str()),
+                ),
                 ("nonce", StrictVal::from(nonce)),
                 ("signatureHex", StrictVal::from(signature.as_str())),
             ],
