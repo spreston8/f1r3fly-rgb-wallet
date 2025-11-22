@@ -476,3 +476,200 @@ async fn test_reject_consignment_missing_fields() {
         error_msg
     );
 }
+
+/// Test 7: Unauthorized transfer rejected by signature verification
+///
+/// Verifies:
+/// - Transfers require valid signature from UTXO owner
+/// - Attacker cannot move tokens by signing with their own key
+/// - Contract-level authorization prevents unauthorized transfers
+#[tokio::test]
+async fn test_unauthorized_transfer_rejected() {
+    if !check_f1r3node_available() {
+        return;
+    }
+
+    let env = TestBitcoinEnv::new("unauthorized_transfer");
+
+    // ========================================================================
+    // Step 1: Alice issues 10,000 tokens
+    // ========================================================================
+    let (mut alice, asset_info, _) =
+        issue_test_asset(&env, env.unique_wallet_name(), "TEST", 10_000)
+            .await
+            .expect("Failed to issue asset");
+
+    // ========================================================================
+    // Step 2: Attacker wallet accepts genesis (to know about the contract)
+    // ========================================================================
+    let mut attacker = setup_recipient_wallet(&env, "attacker", "password")
+        .await
+        .expect("Failed to setup attacker");
+
+    let genesis_response = alice
+        .export_genesis(&asset_info.contract_id)
+        .await
+        .expect("Failed to export genesis");
+
+    attacker
+        .accept_consignment(
+            genesis_response
+                .consignment_path
+                .to_str()
+                .expect("Invalid path"),
+        )
+        .await
+        .expect("Failed to accept genesis");
+
+    // ========================================================================
+    // Step 3: Attacker generates invoice for themselves
+    // ========================================================================
+    let attacker_invoice_data = attacker
+        .generate_invoice_with_pubkey(&asset_info.contract_id, 5_000)
+        .expect("Failed to generate attacker's invoice");
+
+    let attacker_invoice_string = attacker_invoice_data.invoice_string.clone();
+    let attacker_pubkey = attacker_invoice_data.recipient_pubkey_hex.clone();
+
+    // ========================================================================
+    // Step 4: Attacker tries to transfer Alice's tokens using their own signature
+    // ========================================================================
+    // This should FAIL because:
+    // 1. The "from" UTXO is owned by Alice (registered with Alice's pubkey)
+    // 2. Attacker's signature won't match Alice's pubkey
+    // 3. The contract should reject with "Invalid signature"
+
+    // Parse invoice to get "to" seal
+    let parsed = f1r3fly_rgb_wallet::f1r3fly::parse_invoice(&attacker_invoice_string)
+        .expect("Failed to parse invoice");
+
+    // Extract seal from beneficiary
+    let to_wtxo_seal = f1r3fly_rgb_wallet::f1r3fly::extract_seal_from_invoice(&parsed.beneficiary)
+        .expect("Failed to extract seal");
+
+    // Get Alice's genesis UTXO seal (the "from" that attacker wants to steal from)
+    let alice_balances = alice
+        .get_asset_balance(&asset_info.contract_id)
+        .await
+        .expect("Failed to get Alice's balance");
+
+    assert_eq!(
+        alice_balances.total, 10_000,
+        "Alice should have 10,000 tokens"
+    );
+    assert!(
+        !alice_balances.utxo_balances.is_empty(),
+        "Alice should have UTXOs with tokens"
+    );
+
+    // Get Alice's UTXO outpoint string (display format, big-endian)
+    let from_seal_display = alice_balances.utxo_balances[0].outpoint.clone();
+
+    // NORMALIZE the seal to match what was registered during issue()
+    // The contract registers owners using normalized (little-endian) txids
+    let from_seal_id = {
+        let parts: Vec<&str> = from_seal_display.split(':').collect();
+        if parts.len() != 2 {
+            panic!("Invalid UTXO format: {}", from_seal_display);
+        }
+
+        let txid_display = parts[0];
+        let vout = parts[1];
+
+        // Decode and reverse to get internal (little-endian) format
+        let txid_bytes = hex::decode(txid_display).expect("Invalid txid hex");
+        let mut txid_internal = txid_bytes;
+        txid_internal.reverse();
+
+        format!("{}:{}", hex::encode(txid_internal), vout)
+    };
+
+    // Convert WTxoSeal to string format for contract call
+    let to_seal_id = to_wtxo_seal.to_string();
+
+    // Generate nonce using f1r3fly_rgb utility
+    use f1r3fly_rgb::generate_nonce;
+    let nonce = generate_nonce();
+
+    // Get ATTACKER's signing key (wrong key!)
+    let attacker_contracts = attacker
+        .f1r3fly_contracts()
+        .expect("F1r3fly not initialized");
+    let attacker_signing_key = attacker_contracts
+        .contracts()
+        .executor()
+        .get_child_key()
+        .expect("Failed to get attacker's key");
+
+    // Attacker signs the transfer with THEIR key (not Alice's)
+    use f1r3fly_rgb::generate_transfer_signature;
+    let attacker_signature = generate_transfer_signature(
+        &from_seal_id,
+        &to_seal_id,
+        5_000,
+        nonce,
+        &attacker_signing_key, // ❌ Wrong key!
+    )
+    .expect("Failed to generate signature");
+
+    // Attempt to execute unauthorized transfer via contract
+    use amplify::confinement::Confined;
+    use std::collections::BTreeMap;
+    use strict_types::StrictVal;
+
+    let attacker_contracts_mut = attacker
+        .f1r3fly_contracts_mut()
+        .expect("F1r3fly not initialized");
+
+    let contract = attacker_contracts_mut
+        .contracts_mut()
+        .get_mut(&parsed.contract_id)
+        .expect("Contract not found");
+
+    // Create empty seals map (Confined type required by call_method)
+    let empty_seals: BTreeMap<u16, f1r3fly_rgb::WTxoSeal> = BTreeMap::new();
+    let seals_map = Confined::try_from(empty_seals).expect("Failed to create confined map");
+
+    // Call transfer with attacker's (wrong) signature
+    let _result = contract
+        .call_method(
+            "transfer",
+            &[
+                ("from", StrictVal::from(from_seal_id.as_str())),
+                ("to", StrictVal::from(to_seal_id.as_str())),
+                ("amount", StrictVal::from(5_000u64)),
+                ("toPubKey", StrictVal::from(attacker_pubkey.as_str())),
+                ("nonce", StrictVal::from(nonce)),
+                (
+                    "fromSignatureHex",
+                    StrictVal::from(attacker_signature.as_str()),
+                ),
+            ],
+            seals_map,
+        )
+        .await;
+
+    // ========================================================================
+    // Step 5: Verify the unauthorized transfer was REJECTED
+    // ========================================================================
+    // NOTE: The Rholang execution may succeed (no crash), but the contract
+    // should return {"success": false, "error": "Invalid signature"}
+    // The real test is whether Alice's balance changed (it shouldn't have)
+
+    // We don't assert on result.is_err() because the Rholang execution itself
+    // may succeed while the business logic (signature verification) fails.
+    // Instead, we verify that no tokens were stolen by checking balances below.
+
+    // ========================================================================
+    // Step 6: Verify Alice still has all 10,000 tokens (nothing was stolen)
+    // ========================================================================
+    let alice_balance_after = alice
+        .get_asset_balance(&asset_info.contract_id)
+        .await
+        .expect("Failed to get Alice's balance after attack");
+
+    assert_eq!(
+        alice_balance_after.total, 10_000,
+        "Alice should still have all 10,000 tokens after failed attack"
+    );
+}
