@@ -11,21 +11,23 @@ use crate::config::{ConfigError, GlobalConfig};
 use crate::f1r3fly::balance::BalanceError as RgbBalanceError;
 use crate::f1r3fly::executor::F1r3flyExecutorError;
 use crate::f1r3fly::{
-    get_asset_balance, get_asset_info, get_occupied_utxos, get_rgb_balance, get_rgb_seal_info,
-    issue_asset, list_assets, AssetBalance, AssetError, AssetInfo, AssetListItem,
-    ContractsManagerError, F1r3flyContractsManager, F1r3flyExecutorManager, IssueAssetRequest,
-    RgbOccupiedUtxo,
+    attempt_claim, get_asset_balance, get_asset_info, get_occupied_utxos, get_rgb_balance,
+    get_rgb_seal_info, issue_asset, list_assets, AssetBalance, AssetError, AssetInfo,
+    AssetListItem, ClaimError, ContractsManagerError, F1r3flyContractsManager,
+    F1r3flyExecutorManager, IssueAssetRequest, RgbOccupiedUtxo,
 };
 use crate::storage::{
     file_system::{create_wallet_directory, load_wallet, save_wallet, wallet_dir, FileSystemError},
     keys::{generate_mnemonic, KeyError},
     models::{WalletKeys, WalletMetadata},
+    ClaimStatus,
 };
 use crate::types::{UtxoFilter, UtxoInfo, UtxoStatus};
 use bdk_wallet::bitcoin::OutPoint;
 #[allow(deprecated)]
 use bdk_wallet::{KeychainKind, SignOptions};
 use std::collections::HashSet;
+use std::str::FromStr;
 
 /// Errors that can occur in the wallet manager
 #[derive(Debug, thiserror::Error)]
@@ -65,6 +67,9 @@ pub enum ManagerError {
 
     #[error("RGB balance error: {0}")]
     RgbBalance(#[from] RgbBalanceError),
+
+    #[error("Storage error: {0}")]
+    Storage(#[from] crate::storage::StorageError),
 
     #[error("Wallet not loaded")]
     WalletNotLoaded,
@@ -368,15 +373,96 @@ impl WalletManager {
     /// println!("Synced to height: {}", result.height);
     /// println!("New transactions: {}", result.new_transactions);
     /// ```
-    pub fn sync_wallet(&mut self) -> Result<SyncResult, ManagerError> {
-        let wallet = self
-            .bitcoin_wallet
-            .as_mut()
-            .ok_or(ManagerError::WalletNotLoaded)?;
+    pub async fn sync_wallet(&mut self) -> Result<SyncResult, ManagerError> {
+        // Perform Bitcoin sync
+        let result = {
+            let wallet = self
+                .bitcoin_wallet
+                .as_mut()
+                .ok_or(ManagerError::WalletNotLoaded)?;
+            sync_wallet(wallet, &self.esplora_client)?
+        };
 
-        let result = sync_wallet(wallet, &self.esplora_client)?;
+        // Retry pending claims after Bitcoin sync
+        if self.f1r3fly_contracts.is_some() && self.bitcoin_wallet.is_some() {
+            self.retry_pending_claims().await?;
+        }
 
         Ok(result)
+    }
+
+    /// Retry pending claims after wallet sync
+    ///
+    /// Called automatically by `sync_wallet()` to attempt to claim any pending
+    /// witness balances that may now have confirmed UTXOs.
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) on success, error if claim storage access fails
+    async fn retry_pending_claims(&mut self) -> Result<(), ManagerError> {
+        let contracts_manager = self
+            .f1r3fly_contracts
+            .as_mut()
+            .ok_or(ManagerError::F1r3flyNotInitialized)?;
+
+        let bitcoin_wallet = self
+            .bitcoin_wallet
+            .as_ref()
+            .ok_or(ManagerError::WalletNotLoaded)?;
+
+        // Fast query from hybrid storage (likely cache hit)
+        let pending = contracts_manager.claim_storage().get_pending_claims(None)?;
+
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        log::info!("🔄 Retrying {} pending claim(s)...", pending.len());
+
+        for claim in pending {
+            if claim.status != ClaimStatus::Pending {
+                continue;
+            }
+
+            let mapping = f1r3fly_rgb::WitnessMapping {
+                witness_id: claim.witness_id.clone(),
+                recipient_address: claim.recipient_address.clone(),
+                expected_vout: claim.expected_vout,
+            };
+
+            let contract_id =
+                hypersonic::ContractId::from_str(&claim.contract_id).map_err(|e| {
+                    ManagerError::Asset(AssetError::F1r3flyRgb(
+                        f1r3fly_rgb::F1r3flyRgbError::InvalidResponse(format!(
+                            "Invalid contract ID: {}",
+                            e
+                        )),
+                    ))
+                })?;
+
+            match attempt_claim(contracts_manager, bitcoin_wallet, contract_id, &mapping).await {
+                Ok(_) => {
+                    log::info!("✅ Claim succeeded for {}", claim.witness_id);
+                    contracts_manager
+                        .claim_storage_mut()
+                        .mark_claim_completed(claim.id.unwrap())?;
+                }
+                Err(ClaimError::UtxoNotFound) => {
+                    log::debug!("⏳ UTXO still not found for {}", claim.witness_id);
+                    // Keep as Pending
+                }
+                Err(e) => {
+                    log::error!("❌ Claim failed for {}: {}", claim.witness_id, e);
+                    contracts_manager.claim_storage_mut().update_claim_status(
+                        claim.id.unwrap(),
+                        ClaimStatus::Failed,
+                        Some(e.to_string()),
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Get the balance of the currently loaded wallet
@@ -1358,10 +1444,16 @@ impl WalletManager {
             .as_mut()
             .ok_or(ManagerError::WalletNotLoaded)?;
 
+        let bitcoin_wallet = self
+            .bitcoin_wallet
+            .as_ref()
+            .ok_or(ManagerError::WalletNotLoaded)?;
+
         // Accept consignment
         let response = crate::f1r3fly::accept_consignment(
             contracts_manager,
             std::path::Path::new(consignment_path),
+            bitcoin_wallet,
         )
         .await
         .map_err(|e| {

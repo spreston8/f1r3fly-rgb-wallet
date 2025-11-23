@@ -224,7 +224,7 @@ async fn test_balance_specific_asset() {
 
     // Sync with retry to ensure second UTXO is visible (critical for parallel tests)
     for attempt in 1..=5 {
-        manager.sync_wallet().expect("Failed to sync wallet");
+        manager.sync_wallet().await.expect("Failed to sync wallet");
 
         // Check if the second UTXO is now visible
         let utxos: Vec<_> = manager

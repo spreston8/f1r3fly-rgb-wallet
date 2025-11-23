@@ -84,7 +84,7 @@ async fn test_bitcoin_layer_list_utxos() {
     env.wait_for_confirmation(&txid1, 1)
         .await
         .expect("Failed to wait for txid1 confirmation");
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
     let utxos_1conf = manager
         .bitcoin_wallet()
         .expect("Bitcoin wallet not loaded")
@@ -127,7 +127,7 @@ async fn test_bitcoin_layer_list_utxos() {
     env.wait_for_confirmation(&txid2, 1)
         .await
         .expect("Failed to wait for txid2 confirmation");
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     let utxos_mixed = manager
         .bitcoin_wallet()
@@ -194,7 +194,7 @@ async fn test_rgb_layer_seal_info() {
     env.wait_for_confirmation(&txid, 1)
         .await
         .expect("Failed to wait for confirmation");
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     let utxos = manager
         .bitcoin_wallet()
@@ -245,7 +245,7 @@ async fn test_rgb_layer_seal_info() {
     env.wait_for_confirmation(&issue_txid, 1)
         .await
         .expect("Failed to wait for confirmation");
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     let utxos_for_issue = manager
         .bitcoin_wallet()
@@ -275,7 +275,7 @@ async fn test_rgb_layer_seal_info() {
     env.wait_for_confirmation(&asset_info.genesis_seal.split(':').next().unwrap(), 1)
         .await
         .expect("Failed to wait for genesis confirmation");
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     // Step 3: Query RGB seal info for UTXO with asset using manager's list_utxos
     let utxos_after_issue = manager
@@ -349,7 +349,7 @@ async fn test_manager_orchestration_with_filters() {
     env.wait_for_confirmation(&txid1, 3)
         .await
         .expect("Failed to wait for confirmation");
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     // UTXO 2: Will be RGB-occupied
     let request = IssueAssetRequest {
@@ -369,7 +369,7 @@ async fn test_manager_orchestration_with_filters() {
     env.wait_for_confirmation(genesis_txid, 1)
         .await
         .expect("Failed to wait for genesis confirmation");
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     // UTXO 3: Bitcoin-only, unconfirmed
     let address3 = manager
@@ -377,7 +377,7 @@ async fn test_manager_orchestration_with_filters() {
         .expect("Failed to get new address");
     env.fund_address(&address3, 0.1)
         .expect("Failed to fund address 3");
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     // Step 2: Test default filter (no restrictions)
     let filter_all = UtxoFilter::default();
@@ -527,7 +527,7 @@ async fn test_multiple_rgb_assets() {
     env.wait_for_confirmation(genesis_txid1, 1)
         .await
         .expect("Failed to wait for confirmation");
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     // Step 2: Create second genesis UTXO and issue second asset
     let address2 = manager
@@ -539,7 +539,7 @@ async fn test_multiple_rgb_assets() {
     env.wait_for_confirmation(&txid2, 1)
         .await
         .expect("Failed to wait for confirmation");
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     let utxos = manager
         .bitcoin_wallet()
@@ -575,7 +575,7 @@ async fn test_multiple_rgb_assets() {
     env.wait_for_confirmation(genesis_txid2, 1)
         .await
         .expect("Failed to wait for confirmation");
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     // Step 3: Verify both assets are tracked correctly
     let utxos_all = manager
@@ -821,7 +821,10 @@ async fn test_data_structures_and_edge_cases() {
         .expect("Failed to issue asset with large amount");
 
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    manager_rgb.sync_wallet().expect("Failed to sync wallet");
+    manager_rgb
+        .sync_wallet()
+        .await
+        .expect("Failed to sync wallet");
 
     let utxos_large = manager_rgb
         .list_utxos(UtxoFilter {

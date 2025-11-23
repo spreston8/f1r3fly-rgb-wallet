@@ -30,7 +30,7 @@ async fn test_cli_flow_get_addresses_then_spend() {
         .expect("Failed to create wallet");
 
     // Step 2: Sync wallet initially (like CLI 'sync')
-    manager.sync_wallet().expect("Failed to initial sync");
+    manager.sync_wallet().await.expect("Failed to initial sync");
 
     // Step 3: Get addresses via get_addresses() with count=1 (like CLI 'get-addresses --count 1')
     let addresses = manager
@@ -52,7 +52,10 @@ async fn test_cli_flow_get_addresses_then_spend() {
         .expect("Failed to confirm funding");
 
     // Step 5: Sync wallet (like CLI 'sync' after funding)
-    manager.sync_wallet().expect("Failed to sync after funding");
+    manager
+        .sync_wallet()
+        .await
+        .expect("Failed to sync after funding");
 
     // Step 6: Check balance
     let balance = manager.get_balance().expect("Failed to get balance");
@@ -89,6 +92,7 @@ async fn test_cli_flow_get_addresses_then_spend() {
     // Step 10: Sync and verify balance changed
     manager
         .sync_wallet()
+        .await
         .expect("Failed to sync after UTXO creation");
 
     let final_balance = manager.get_balance().expect("Failed to get final balance");
@@ -121,7 +125,7 @@ async fn test_cli_flow_with_wallet_reload() {
             .expect("Failed to create wallet");
 
         // Sync
-        manager.sync_wallet().expect("Failed to sync");
+        manager.sync_wallet().await.expect("Failed to sync");
 
         // Get NEW address - this is the correct way, not get_addresses()
         manager
@@ -147,7 +151,10 @@ async fn test_cli_flow_with_wallet_reload() {
             .load_wallet(&wallet_name, password)
             .expect("Failed to load wallet");
 
-        manager.sync_wallet().expect("Failed to sync after funding");
+        manager
+            .sync_wallet()
+            .await
+            .expect("Failed to sync after funding");
 
         let balance = manager.get_balance().expect("Failed to get balance");
         println!("Balance after sync: {} sats", balance.confirmed);
@@ -165,6 +172,7 @@ async fn test_cli_flow_with_wallet_reload() {
         // Sync before spending (might help with witness issues)
         manager
             .sync_wallet()
+            .await
             .expect("Failed to sync before spending");
 
         let target_amount = 30_000;

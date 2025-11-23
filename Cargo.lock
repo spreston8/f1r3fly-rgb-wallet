@@ -1346,7 +1346,7 @@ dependencies = [
 [[package]]
 name = "f1r3fly-rgb"
 version = "0.1.0"
-source = "git+https://github.com/spreston8/f1r3fly-rgb?branch=master#307676f87fb2d024358efb97b42a14e0fb28e42e"
+source = "git+https://github.com/spreston8/f1r3fly-rgb?branch=master#3f4456bcc86a1ab52cecefb4674ee34688aa73b4"
 dependencies = [
  "amplify",
  "bitcoin",
@@ -1401,6 +1401,7 @@ dependencies = [
  "rand 0.8.5",
  "reqwest 0.12.24",
  "rgb-std",
+ "rusqlite",
  "secp256k1 0.28.2",
  "serde",
  "serde_json",

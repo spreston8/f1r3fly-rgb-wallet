@@ -75,7 +75,10 @@ async fn test_multi_party_transfer_chain() {
         .expect("Failed to confirm genesis UTXO");
 
     // Sync wallet to see confirmed UTXO
-    alice.sync_wallet().expect("Failed to sync Alice wallet");
+    alice
+        .sync_wallet()
+        .await
+        .expect("Failed to sync Alice wallet");
 
     // Issue asset
     let request = f1r3fly_rgb_wallet::f1r3fly::IssueAssetRequest {
@@ -114,6 +117,7 @@ async fn test_multi_party_transfer_chain() {
         .expect("Failed to confirm funding");
     alice
         .sync_wallet()
+        .await
         .expect("Failed to sync Alice after funding");
 
     println!("✓ Alice funded with additional Bitcoin");
@@ -174,6 +178,7 @@ async fn test_multi_party_transfer_chain() {
 
     alice
         .sync_wallet()
+        .await
         .expect("Failed to sync Alice after transfer 1");
 
     bob.accept_consignment(transfer1.consignment_path.to_str().expect("Invalid path"))
@@ -181,6 +186,7 @@ async fn test_multi_party_transfer_chain() {
         .expect("Failed for Bob to accept consignment 1");
 
     bob.sync_wallet()
+        .await
         .expect("Failed to sync Bob after transfer 1");
 
     verify_balance_with_retry(&mut alice, &asset_info.contract_id, 7_000, 10)
@@ -218,6 +224,7 @@ async fn test_multi_party_transfer_chain() {
 
     alice
         .sync_wallet()
+        .await
         .expect("Failed to sync Alice after transfer 2");
 
     carol
@@ -227,6 +234,7 @@ async fn test_multi_party_transfer_chain() {
 
     carol
         .sync_wallet()
+        .await
         .expect("Failed to sync Carol after transfer 2");
 
     verify_balance_with_retry(&mut alice, &asset_info.contract_id, 5_000, 10)
@@ -361,7 +369,10 @@ async fn test_transfer_chain_with_explicit_sync() {
         .await
         .expect("Failed to confirm genesis UTXO");
 
-    alice.sync_wallet().expect("Failed to sync Alice wallet");
+    alice
+        .sync_wallet()
+        .await
+        .expect("Failed to sync Alice wallet");
 
     let request = f1r3fly_rgb_wallet::f1r3fly::IssueAssetRequest {
         ticker: "SYNC".to_string(),
@@ -410,14 +421,15 @@ async fn test_transfer_chain_with_explicit_sync() {
         .expect("Failed to confirm transfer");
 
     // Explicit sync for both parties
-    alice.sync_wallet().expect("Failed to sync Alice");
-    bob.sync_wallet().expect("Failed to sync Bob");
+    alice.sync_wallet().await.expect("Failed to sync Alice");
+    bob.sync_wallet().await.expect("Failed to sync Bob");
 
     bob.accept_consignment(transfer1.consignment_path.to_str().expect("Invalid path"))
         .await
         .expect("Bob failed to accept consignment");
 
     bob.sync_wallet()
+        .await
         .expect("Failed to sync Bob after acceptance");
 
     // Verify balances after explicit sync

@@ -60,7 +60,10 @@ async fn test_state_persists_across_wallet_reload() {
             .expect("Failed to load wallet");
 
         // Sync wallet to restore Bitcoin state
-        manager.sync_wallet().expect("Failed to sync after reload");
+        manager
+            .sync_wallet()
+            .await
+            .expect("Failed to sync after reload");
 
         // Verify list_assets shows USD
         let assets = manager.list_assets().expect("Failed to list assets");
@@ -96,7 +99,10 @@ async fn test_state_persists_across_wallet_reload() {
             .expect("Failed to load wallet for second asset");
 
         // Sync wallet
-        manager.sync_wallet().expect("Failed to sync after reload");
+        manager
+            .sync_wallet()
+            .await
+            .expect("Failed to sync after reload");
 
         // Create second genesis UTXO
         let amount_sats = 1_000_000u64;
@@ -112,7 +118,7 @@ async fn test_state_persists_across_wallet_reload() {
 
         // Sync with retry for second UTXO
         for attempt in 1..=5 {
-            manager.sync_wallet().expect("Failed to sync");
+            manager.sync_wallet().await.expect("Failed to sync");
             let utxos: Vec<_> = manager
                 .bitcoin_wallet()
                 .expect("Bitcoin wallet not loaded")
@@ -158,7 +164,10 @@ async fn test_state_persists_across_wallet_reload() {
             .expect("Failed to load wallet for final check");
 
         // Sync wallet
-        manager.sync_wallet().expect("Failed to sync after reload");
+        manager
+            .sync_wallet()
+            .await
+            .expect("Failed to sync after reload");
 
         // Verify both assets in list_assets
         let assets = manager.list_assets().expect("Failed to list assets");
@@ -267,7 +276,10 @@ async fn test_multiple_wallets_isolated_rgb_state() {
             .expect("Failed to load wallet A");
 
         // Sync wallet
-        manager.sync_wallet().expect("Failed to sync wallet A");
+        manager
+            .sync_wallet()
+            .await
+            .expect("Failed to sync wallet A");
 
         let assets = manager.list_assets().expect("Failed to list assets");
         assert_eq!(assets.len(), 1, "Wallet A should have 1 asset");
@@ -288,7 +300,10 @@ async fn test_multiple_wallets_isolated_rgb_state() {
             .expect("Failed to load wallet B");
 
         // Sync wallet
-        manager.sync_wallet().expect("Failed to sync wallet B");
+        manager
+            .sync_wallet()
+            .await
+            .expect("Failed to sync wallet B");
 
         let assets = manager.list_assets().expect("Failed to list assets");
         assert_eq!(assets.len(), 1, "Wallet B should have 1 asset");
@@ -370,7 +385,7 @@ async fn test_genesis_utxo_tracking() {
 
     // Sync with retry
     for attempt in 1..=5 {
-        manager.sync_wallet().expect("Failed to sync");
+        manager.sync_wallet().await.expect("Failed to sync");
         let utxos: Vec<_> = manager
             .bitcoin_wallet()
             .expect("Bitcoin wallet not loaded")

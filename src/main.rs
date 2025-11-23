@@ -58,9 +58,12 @@ fn main() {
             WalletAction::List => commands::wallet::list(overrides).map_err(Into::into),
         },
 
-        Commands::Sync { password } => {
-            commands::bitcoin::sync(cli.wallet, password, overrides).map_err(Into::into)
-        }
+        Commands::Sync { password } => match tokio::runtime::Runtime::new() {
+            Ok(runtime) => runtime
+                .block_on(commands::bitcoin::sync(cli.wallet, password, overrides))
+                .map_err(Into::into),
+            Err(e) => Err(Box::new(e) as Box<dyn std::error::Error>),
+        },
 
         Commands::GetBalance { password } => match tokio::runtime::Runtime::new() {
             Ok(rt) => rt

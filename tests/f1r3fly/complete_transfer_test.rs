@@ -131,7 +131,10 @@ async fn test_complete_transfer_alice_to_bob() {
         .expect("Failed to mine confirmation block");
 
     // Sync wallet to see the confirmed transaction
-    alice.sync_wallet().expect("Failed to sync Alice wallet");
+    alice
+        .sync_wallet()
+        .await
+        .expect("Failed to sync Alice wallet");
 
     // ========================================================================
     // Step 6: Verify Alice's balance (with retry for F1r3fly state delays)
@@ -170,7 +173,7 @@ async fn test_complete_transfer_alice_to_bob() {
     // ========================================================================
     // Bob needs to sync his wallet after accepting the consignment
     // so his BDK wallet can discover the new UTXO that received the tokens
-    bob.sync_wallet().expect("Failed to sync Bob wallet");
+    bob.sync_wallet().await.expect("Failed to sync Bob wallet");
 
     // ========================================================================
     // Step 9: Verify Bob's balance

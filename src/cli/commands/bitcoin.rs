@@ -20,7 +20,7 @@ pub enum BitcoinCommandError {
 }
 
 /// Sync wallet with blockchain
-pub fn sync(
+pub async fn sync(
     wallet_name: Option<String>,
     password: String,
     overrides: ConfigOverrides,
@@ -35,7 +35,7 @@ pub fn sync(
     manager.load_wallet(&wallet_name, &password)?;
 
     // Sync wallet
-    let result = manager.sync_wallet()?;
+    let result = manager.sync_wallet().await?;
 
     println!("✓ Wallet synced successfully");
     println!("  Height: {}", result.height);

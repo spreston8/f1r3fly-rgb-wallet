@@ -227,6 +227,7 @@ async fn test_prevent_double_spend() {
     // Sync Alice's wallet to update UTXO state
     alice
         .sync_wallet()
+        .await
         .expect("Failed to sync Alice wallet after first transfer");
 
     // Verify Alice's balance after first transfer
@@ -330,7 +331,7 @@ async fn test_reject_invalid_seal() {
     if result.is_ok() {
         // If acceptance succeeded, query balance should fail or return 0
         // since the seal points to a non-existent UTXO
-        bob.sync_wallet().expect("Failed to sync Bob wallet");
+        bob.sync_wallet().await.expect("Failed to sync Bob wallet");
 
         let balance_result = bob.get_asset_balance(&asset_info.contract_id).await;
 

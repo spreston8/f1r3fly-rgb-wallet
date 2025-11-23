@@ -36,6 +36,9 @@ secp256k1 = { version = "0.28", features = ["rand-std"] }
 bdk_wallet = { version = "2.2", features = ["keys-bip39", "rusqlite"] }
 bdk_esplora = { version = "0.22", features = ["blocking"] }
 
+# Database (for claim storage) - version must match BDK's rusqlite dependency
+rusqlite = "0.31"
+
 # Encryption
 aes-gcm = "0.10"
 pbkdf2 = { version = "0.12", features = ["simple"] }

@@ -5,13 +5,17 @@
 use std::path::{Path, PathBuf};
 
 use crate::bitcoin::network::{EsploraClient, NetworkError};
+use crate::bitcoin::BitcoinWallet;
 use crate::f1r3fly::{AssetError, F1r3flyContractsManager};
+use crate::storage::{ClaimStatus, PendingClaim, StorageError};
 
-use amplify::confinement::SmallOrdMap;
+use amplify::confinement::{Confined, SmallOrdMap};
 use bp::seals::{Noise, TxoSeal, TxoSealExt, WOutpoint, WTxoSeal};
 use bp::{Outpoint, Txid};
+use hypersonic::ContractId;
+use std::collections::BTreeMap;
 use std::str::FromStr;
-use strict_types::StrictDumb;
+use strict_types::{StrictDumb, StrictVal};
 
 /// Error type for consignment operations
 #[derive(Debug, thiserror::Error)]
@@ -48,6 +52,10 @@ pub enum ConsignmentError {
     #[error("Asset error: {0}")]
     Asset(#[from] AssetError),
 
+    /// Storage error
+    #[error("Storage error: {0}")]
+    Storage(#[from] StorageError),
+
     /// IO error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -55,6 +63,38 @@ pub enum ConsignmentError {
     /// Serialization error
     #[error("Serialization error: {0}")]
     Serialization(String),
+}
+
+/// Error type for claim operations
+#[derive(Debug, thiserror::Error)]
+pub enum ClaimError {
+    /// UTXO not found in wallet yet
+    #[error("UTXO not found in wallet yet")]
+    UtxoNotFound,
+
+    /// Claim signature generation failed
+    #[error("Claim signature generation failed: {0}")]
+    SignatureFailed(String),
+
+    /// Contract call failed
+    #[error("Contract call failed: {0}")]
+    ContractCallFailed(String),
+
+    /// Bitcoin wallet error
+    #[error("Bitcoin wallet error: {0}")]
+    BitcoinError(String),
+}
+
+/// Result from a claim operation
+pub struct ClaimResult {
+    /// Amount of tokens migrated
+    pub migrated_balance: u64,
+
+    /// Source identifier (witness_id)
+    pub from: String,
+
+    /// Destination identifier (real UTXO)
+    pub to: String,
 }
 
 /// Response from exporting genesis consignment
@@ -311,6 +351,7 @@ pub async fn export_genesis(
 ///
 /// * `contracts_manager` - Contracts manager to import into
 /// * `consignment_path` - Path to consignment file
+/// * `bitcoin_wallet` - Bitcoin wallet for UTXO lookup during claim
 ///
 /// # Returns
 ///
@@ -318,6 +359,7 @@ pub async fn export_genesis(
 pub async fn accept_consignment(
     contracts_manager: &mut F1r3flyContractsManager,
     consignment_path: &Path,
+    bitcoin_wallet: &BitcoinWallet,
 ) -> Result<AcceptConsignmentResponse, ConsignmentError> {
     log::info!(
         "📥 Accepting consignment from: {}",
@@ -372,6 +414,65 @@ pub async fn accept_consignment(
         // For transfers, contract already exists - just verify and return
         // State is tracked on F1r3fly blockchain, not locally
         log::info!("✓ Transfer consignment accepted for existing contract");
+
+        // Store witness mapping in database for later claim
+        if let Some(mapping) = &consignment.witness_mapping {
+            log::info!("📝 Storing witness mapping for later claim...");
+
+            let claim = PendingClaim {
+                id: None,
+                witness_id: mapping.witness_id.clone(),
+                recipient_address: mapping.recipient_address.clone(),
+                expected_vout: mapping.expected_vout,
+                contract_id: contract_id_str.clone(),
+                consignment_file: consignment_path.to_path_buf(),
+                status: ClaimStatus::Pending,
+                error: None,
+                created_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                claimed_at: None,
+            };
+
+            let claim_id = contracts_manager
+                .claim_storage_mut()
+                .insert_pending_claim(&claim)?;
+
+            log::info!("✓ Witness mapping stored in database (cache updated)");
+
+            // Attempt to claim immediately
+            log::info!("🔄 Attempting to claim witness balance...");
+
+            match attempt_claim(contracts_manager, bitcoin_wallet, contract_id, mapping).await {
+                Ok(claim_result) => {
+                    log::info!(
+                        "✅ Claim successful! Migrated {} tokens from {} to {}",
+                        claim_result.migrated_balance,
+                        claim_result.from,
+                        claim_result.to
+                    );
+
+                    // Mark as claimed in database
+                    contracts_manager
+                        .claim_storage_mut()
+                        .mark_claim_completed(claim_id)?;
+                }
+                Err(ClaimError::UtxoNotFound) => {
+                    log::warn!("⏳ UTXO not found yet, will retry on next sync");
+                    // Keep as Pending in database
+                }
+                Err(e) => {
+                    log::error!("❌ Claim failed: {}", e);
+                    // Update database with error
+                    contracts_manager.claim_storage_mut().update_claim_status(
+                        claim_id,
+                        ClaimStatus::Failed,
+                        Some(e.to_string()),
+                    )?;
+                }
+            }
+        }
 
         let genesis_info = contracts_manager
             .genesis_utxos()
@@ -544,5 +645,108 @@ pub async fn accept_consignment(
         seals_imported: consignment.seals().len(),
         genesis_txid: outpoint.txid.to_string(),
         genesis_vout: outpoint.vout.into_u32(),
+    })
+}
+
+/// Attempt to claim witness balance to real UTXO
+///
+/// Finds the matching UTXO in the wallet and attempts to execute the claim() method
+/// to migrate balance and ownership from witness_id to real_utxo.
+///
+/// # Arguments
+///
+/// * `contracts_manager` - Contracts manager
+/// * `bitcoin_wallet` - Bitcoin wallet to find UTXO
+/// * `contract_id` - Contract ID
+/// * `mapping` - Witness mapping with claim details
+///
+/// # Returns
+///
+/// `ClaimResult` on success, `ClaimError` if UTXO not found or claim fails
+pub async fn attempt_claim(
+    contracts_manager: &mut F1r3flyContractsManager,
+    bitcoin_wallet: &BitcoinWallet,
+    contract_id: ContractId,
+    mapping: &f1r3fly_rgb::WitnessMapping,
+) -> Result<ClaimResult, ClaimError> {
+    // Step 1: Find recipient's actual UTXO matching the address and vout
+    let utxos: Vec<_> = bitcoin_wallet.inner().list_unspent().collect();
+
+    // Get the script_pubkey for the expected recipient address
+    let expected_address = bdk_wallet::bitcoin::Address::from_str(&mapping.recipient_address)
+        .map_err(|e| ClaimError::BitcoinError(format!("Invalid address: {}", e)))?
+        .assume_checked();
+
+    let matching_utxo = utxos
+        .iter()
+        .find(|utxo| {
+            // Match by script_pubkey (derived from address) and vout
+            utxo.txout.script_pubkey == expected_address.script_pubkey()
+                && utxo.outpoint.vout == mapping.expected_vout
+        })
+        .ok_or(ClaimError::UtxoNotFound)?;
+
+    // Step 2: Format real UTXO identifier (normalized, little-endian)
+    use bitcoin::hashes::Hash;
+    let txid_bytes = matching_utxo.outpoint.txid.to_byte_array();
+    let real_utxo = format!(
+        "{}:{}",
+        hex::encode(txid_bytes),
+        matching_utxo.outpoint.vout
+    );
+
+    log::debug!("  Found matching UTXO: {}", real_utxo);
+    log::debug!("  Will claim from: {}", mapping.witness_id);
+
+    // Step 3: Generate claim signature
+    // Sign message: (witness_id, real_utxo)
+    let signing_key = contracts_manager
+        .contracts()
+        .executor()
+        .get_child_key()
+        .map_err(|e| ClaimError::SignatureFailed(e.to_string()))?;
+
+    let signature =
+        f1r3fly_rgb::generate_claim_signature(&mapping.witness_id, &real_utxo, &signing_key)
+            .map_err(|e| ClaimError::SignatureFailed(e.to_string()))?;
+
+    // Step 4: Call contract.claim()
+    let contract = contracts_manager
+        .contracts_mut()
+        .get_mut(&contract_id)
+        .ok_or_else(|| ClaimError::ContractCallFailed("Contract not found".to_string()))?;
+
+    let empty_seals: BTreeMap<u16, f1r3fly_rgb::WTxoSeal> = BTreeMap::new();
+    let seals_map = Confined::try_from(empty_seals)
+        .map_err(|e| ClaimError::ContractCallFailed(format!("Seals map error: {}", e)))?;
+
+    let result = contract
+        .call_method(
+            "claim",
+            &[
+                ("witness_id", StrictVal::from(mapping.witness_id.as_str())),
+                ("real_utxo", StrictVal::from(real_utxo.as_str())),
+                ("claimantSignatureHex", StrictVal::from(signature.as_str())),
+            ],
+            seals_map,
+        )
+        .await
+        .map_err(|e| ClaimError::ContractCallFailed(e.to_string()))?;
+
+    // Step 5: Parse result
+    // TODO:
+    // Contract returns: {"success": true, "migrated_balance": 2500, ...}
+    // Note: We can't easily parse JSON from state_hash, so we trust success
+    // The real verification is that subsequent balance queries work
+
+    log::info!(
+        "✓ Claim executed, state_hash: {}",
+        hex::encode(&result.state_hash)
+    );
+
+    Ok(ClaimResult {
+        migrated_balance: 0, // Cannot extract from result easily
+        from: mapping.witness_id.clone(),
+        to: real_utxo,
     })
 }

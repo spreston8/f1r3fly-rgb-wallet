@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use f1r3fly_rgb::{BitcoinAnchorTracker, ContractMetadata, F1r3flyRgbContracts, TxoSeal};
 
 use crate::f1r3fly::executor::F1r3flyExecutorManager;
+use crate::storage::claim_storage::ClaimStorage;
 
 /// Error type for contracts manager operations
 #[derive(Debug, thiserror::Error)]
@@ -190,6 +191,9 @@ pub struct F1r3flyContractsManager {
 
     /// Path to state file (f1r3fly_state.json)
     state_path: PathBuf,
+
+    /// Hybrid storage for witness claim tracking (SQLite + in-memory cache)
+    claim_storage: ClaimStorage,
 }
 
 impl F1r3flyContractsManager {
@@ -222,12 +226,21 @@ impl F1r3flyContractsManager {
 
         let state_path = wallet_dir.as_ref().join("f1r3fly_state.json");
 
+        // Initialize hybrid storage for claims
+        let claim_storage = ClaimStorage::new(wallet_dir.as_ref()).map_err(|e| {
+            ContractsManagerError::InvalidState(format!(
+                "Failed to initialize claim storage: {}",
+                e
+            ))
+        })?;
+
         Ok(Self {
             contracts,
             tracker,
             genesis_utxos: HashMap::new(),
             contract_derivation_indices: HashMap::new(),
             state_path,
+            claim_storage,
         })
     }
 
@@ -315,12 +328,19 @@ impl F1r3flyContractsManager {
             BitcoinAnchorTracker::new()
         };
 
+        // Load claim storage and invalidate cache (rebuild from DB)
+        let claim_storage = ClaimStorage::new(wallet_dir.as_ref()).map_err(|e| {
+            ContractsManagerError::InvalidState(format!("Failed to load claim storage: {}", e))
+        })?;
+        claim_storage.invalidate_cache(); // Rebuild cache from DB on next query
+
         Ok(Self {
             contracts,
             tracker,
             genesis_utxos: state.genesis_utxos,
             contract_derivation_indices: state.contract_derivation_indices,
             state_path,
+            claim_storage,
         })
     }
 
@@ -576,5 +596,19 @@ impl F1r3flyContractsManager {
     /// Returns a reference to the HashMap of all stored genesis UTXOs.
     pub fn genesis_utxos(&self) -> &HashMap<String, GenesisUtxoInfo> {
         &self.genesis_utxos
+    }
+
+    /// Get reference to claim storage
+    ///
+    /// Use this to query pending claims.
+    pub fn claim_storage(&self) -> &ClaimStorage {
+        &self.claim_storage
+    }
+
+    /// Get mutable reference to claim storage
+    ///
+    /// Use this to insert claims, update status, or mark claims as completed.
+    pub fn claim_storage_mut(&mut self) -> &mut ClaimStorage {
+        &mut self.claim_storage
     }
 }

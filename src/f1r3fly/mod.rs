@@ -31,8 +31,8 @@ pub use invoice::{
 };
 
 pub use consignment::{
-    accept_consignment, export_genesis, AcceptConsignmentResponse, ConsignmentError,
-    ExportGenesisResponse,
+    accept_consignment, attempt_claim, export_genesis, AcceptConsignmentResponse, ClaimError,
+    ConsignmentError, ExportGenesisResponse,
 };
 
 pub use transfer::{send_transfer, TransferError, TransferResponse};

@@ -153,7 +153,7 @@ async fn test_manager_load_wallet_and_sync() {
         .expect("Failed to load wallet");
 
     // Step 7: Sync wallet
-    let sync_result = manager2.sync_wallet().expect("Failed to sync wallet");
+    let sync_result = manager2.sync_wallet().await.expect("Failed to sync wallet");
 
     assert!(
         sync_result.new_txs > 0,
@@ -201,8 +201,8 @@ async fn test_manager_sync_wallet_updates_balance() {
         .await
         .expect("Failed to confirm funding");
 
-    // Step 5: Call manager.sync_wallet()
-    let sync_result = manager.sync_wallet().expect("Failed to sync wallet");
+    // Step 5: Call manager.sync_wallet().await
+    let sync_result = manager.sync_wallet().await.expect("Failed to sync wallet");
 
     // Step 6: Verify SyncResult shows new transactions
     assert!(
@@ -311,7 +311,7 @@ async fn test_manager_create_utxo_full_flow() {
         .expect("Failed to confirm funding");
 
     // Step 3: Sync wallet
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     // Step 4: Create UTXO of 25,000 sats with mark_rgb=true
     let target_amount = 25_000;
@@ -336,6 +336,7 @@ async fn test_manager_create_utxo_full_flow() {
     // Step 7: Sync wallet
     manager
         .sync_wallet()
+        .await
         .expect("Failed to sync after UTXO creation");
 
     // Step 8: Verify manager.rgb_occupied() contains outpoint
@@ -375,7 +376,7 @@ async fn test_manager_send_bitcoin_full_flow() {
         .expect("Failed to confirm funding");
 
     // Step 3: Sync
-    manager.sync_wallet().expect("Failed to sync wallet");
+    manager.sync_wallet().await.expect("Failed to sync wallet");
 
     let initial_balance = manager
         .get_balance()
@@ -403,7 +404,10 @@ async fn test_manager_send_bitcoin_full_flow() {
         .expect("Failed to confirm send transaction");
 
     // Step 8: Sync
-    manager.sync_wallet().expect("Failed to sync after send");
+    manager
+        .sync_wallet()
+        .await
+        .expect("Failed to sync after send");
 
     // Step 9: Verify balance decreased
     let final_balance = manager.get_balance().expect("Failed to get final balance");
@@ -464,7 +468,10 @@ async fn test_manager_multiple_wallets_isolated() {
         .expect("Failed to confirm funding");
 
     // Step 5: Sync wallet1
-    manager1.sync_wallet().expect("Failed to sync wallet1");
+    manager1
+        .sync_wallet()
+        .await
+        .expect("Failed to sync wallet1");
 
     // Step 6: Verify wallet1 has balance
     let balance1 = manager1.get_balance().expect("Failed to get balance1");
@@ -477,7 +484,10 @@ async fn test_manager_multiple_wallets_isolated() {
     );
 
     // Step 7: Load wallet2 (already loaded, but sync it)
-    manager2.sync_wallet().expect("Failed to sync wallet2");
+    manager2
+        .sync_wallet()
+        .await
+        .expect("Failed to sync wallet2");
 
     // Step 8: Verify wallet2 balance = 0
     let balance2 = manager2.get_balance().expect("Failed to get balance2");
@@ -497,6 +507,7 @@ async fn test_manager_multiple_wallets_isolated() {
 
     manager3
         .sync_wallet()
+        .await
         .expect("Failed to sync wallet1 in manager3");
 
     // Step 10: Verify wallet1 still has correct balance

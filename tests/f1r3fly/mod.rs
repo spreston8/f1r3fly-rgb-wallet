@@ -152,7 +152,7 @@ pub async fn setup_wallet_with_genesis_utxo(
     env.wait_for_confirmation(&funding_txid, 1).await?;
 
     // 5. Sync wallet to detect funds
-    manager.sync_wallet()?;
+    manager.sync_wallet().await?;
 
     // 6. Verify wallet has funds
     let balance = manager.get_balance()?;
@@ -177,7 +177,7 @@ pub async fn setup_wallet_with_genesis_utxo(
 
     // 9. Sync wallet and wait for UTXO to be visible (with retries for Esplora indexing lag)
     for attempt in 1..=5 {
-        manager.sync_wallet()?;
+        manager.sync_wallet().await?;
 
         // Check if the UTXO is now visible in the wallet
         let utxos: Vec<_> = manager
@@ -343,7 +343,7 @@ pub async fn setup_recipient_wallet(
     env.wait_for_confirmation(&funding_txid, 1).await?;
 
     // Sync to detect funds
-    manager.sync_wallet()?;
+    manager.sync_wallet().await?;
 
     let balance = manager.get_balance()?;
     log::debug!(

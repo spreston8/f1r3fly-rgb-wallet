@@ -287,13 +287,14 @@ pub async fn send_transfer(
 
     // To: Recipient UTXO - doesn't exist yet, so use a deterministic placeholder
     // We use a witness identifier based on the recipient address + vout from invoice
-    let to_seal_id = match &recipient_seal.primary {
+    // Returns (seal_id, witness_mapping) where witness_mapping is captured for claim process
+    let (to_seal_id, witness_mapping) = match &recipient_seal.primary {
         WOutpoint::Extern(outpoint) => {
             // Recipient UTXO already exists (rare case)
             use amplify::ByteArray;
             let txid_hex = hex::encode(outpoint.txid.to_byte_array());
             let vout = outpoint.vout.into_u32();
-            format!("{}:{}", txid_hex, vout)
+            (format!("{}:{}", txid_hex, vout), None) // No witness mapping needed
         }
         WOutpoint::Wout(vout) => {
             // Witness output: UTXO will be created in this transfer
@@ -307,8 +308,16 @@ pub async fn send_transfer(
             let mut hasher = Sha256::new();
             hasher.update(recipient_addr.as_bytes());
             let addr_hash = hex::encode(&hasher.finalize()[0..16]); // Use first 16 bytes
+            let witness_id = format!("witness:{}:{}", addr_hash, vout.into_u32());
 
-            format!("witness:{}:{}", addr_hash, vout.into_u32())
+            // Create witness mapping for claim process
+            let mapping = f1r3fly_rgb::WitnessMapping {
+                witness_id: witness_id.clone(),
+                recipient_address: recipient_addr,
+                expected_vout: vout.into_u32(),
+            };
+
+            (witness_id, Some(mapping))
         }
     };
 
@@ -561,13 +570,16 @@ pub async fn send_transfer(
     log::debug!("  Using actual witness TX in consignment: {}", txid);
 
     // Create consignment with seals and actual witness transaction
-    let consignment = f1r3fly_rgb::F1r3flyConsignment::new(
+    let mut consignment = f1r3fly_rgb::F1r3flyConsignment::new(
         &contract,
         result,
         seals_map,
         vec![bp_tx],
         false, // is_genesis - this is a transfer, not genesis
     )?;
+
+    // Add witness mapping if this is a witness transfer
+    consignment.witness_mapping = witness_mapping;
 
     log::info!("✓ Consignment created");
 
