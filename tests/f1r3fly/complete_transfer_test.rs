@@ -74,6 +74,16 @@ async fn test_complete_transfer_alice_to_bob() {
     let recipient_pubkey = invoice_with_pubkey.recipient_pubkey_hex.clone();
 
     // ========================================================================
+    // Step 2.5: Bob syncs after revealing invoice address
+    // ========================================================================
+    // CRITICAL: After reveal_next_address() in invoice generation, Bob must sync
+    // so that BDK's in-memory spk_index tracks the new address for UTXO discovery.
+    // Without this sync, BDK won't discover UTXOs sent to the invoice address!
+    bob.sync_wallet()
+        .await
+        .expect("Failed to sync Bob after invoice generation");
+
+    // ========================================================================
     // Step 3: Alice sends transfer
     // ========================================================================
     let fee_rate = f1r3fly_rgb_wallet::bitcoin::utxo::FeeRateConfig::medium_priority();
@@ -139,7 +149,7 @@ async fn test_complete_transfer_alice_to_bob() {
     // ========================================================================
     // Step 6: Verify Alice's balance (with retry for F1r3fly state delays)
     // ========================================================================
-    verify_balance_with_retry(&mut alice, &asset_info.contract_id, 7_500, 5)
+    verify_balance_with_retry(&mut alice, &asset_info.contract_id, 7_500, 20)
         .await
         .expect("Alice balance mismatch");
 
@@ -157,6 +167,15 @@ async fn test_complete_transfer_alice_to_bob() {
     );
 
     // ========================================================================
+    // Step 7.5: Bob syncs wallet to detect received UTXO
+    // ========================================================================
+    // Bob needs to sync his wallet BEFORE accepting the consignment
+    // so his BDK wallet can discover the new UTXO that Alice sent him.
+    // This UTXO will be used during the auto-claim process when accepting the consignment.
+
+    bob.sync_wallet().await.expect("Failed to sync Bob wallet");
+
+    // ========================================================================
     // Step 8: Bob accepts consignment
     // ========================================================================
     bob.accept_consignment(
@@ -169,16 +188,20 @@ async fn test_complete_transfer_alice_to_bob() {
     .expect("Failed to accept consignment");
 
     // ========================================================================
-    // Step 8.5: Bob syncs wallet to detect received UTXO
+    // Step 8.5: Bob syncs wallet again to trigger auto-claim
     // ========================================================================
-    // Bob needs to sync his wallet after accepting the consignment
-    // so his BDK wallet can discover the new UTXO that received the tokens
-    bob.sync_wallet().await.expect("Failed to sync Bob wallet");
+    // After accepting the consignment (which stores the witness mapping),
+    // Bob needs to sync again. This triggers retry_pending_claims which will
+    // find the stored witness mapping and execute the claim to migrate the
+    // balance from the witness ID to Bob's real UTXO.
+    bob.sync_wallet()
+        .await
+        .expect("Failed to sync Bob wallet after accept");
 
     // ========================================================================
     // Step 9: Verify Bob's balance
     // ========================================================================
-    verify_balance_with_retry(&mut bob, &asset_info.contract_id, 2_500, 5)
+    verify_balance_with_retry(&mut bob, &asset_info.contract_id, 2_500, 20)
         .await
         .expect("Bob balance mismatch");
 

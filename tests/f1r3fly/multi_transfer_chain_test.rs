@@ -165,6 +165,11 @@ async fn test_multi_party_transfer_chain() {
     let bob_invoice1_string = bob_invoice_data1.invoice_string.clone();
     let bob_pubkey1 = bob_invoice_data1.recipient_pubkey_hex.clone();
 
+    // CRITICAL: Sync after revealing invoice address so BDK tracks it
+    bob.sync_wallet()
+        .await
+        .expect("Failed to sync Bob after invoice generation");
+
     let transfer1 = alice
         .send_transfer(&bob_invoice1_string, bob_pubkey1, &fee_rate)
         .await
@@ -189,11 +194,11 @@ async fn test_multi_party_transfer_chain() {
         .await
         .expect("Failed to sync Bob after transfer 1");
 
-    verify_balance_with_retry(&mut alice, &asset_info.contract_id, 7_000, 10)
+    verify_balance_with_retry(&mut alice, &asset_info.contract_id, 7_000, 20)
         .await
         .expect("Alice should have 7,000 tokens");
 
-    verify_balance_with_retry(&mut bob, &asset_info.contract_id, 3_000, 10)
+    verify_balance_with_retry(&mut bob, &asset_info.contract_id, 3_000, 20)
         .await
         .expect("Bob should have 3,000 tokens");
 
@@ -210,6 +215,12 @@ async fn test_multi_party_transfer_chain() {
 
     let carol_invoice1_string = carol_invoice_data1.invoice_string.clone();
     let carol_pubkey1 = carol_invoice_data1.recipient_pubkey_hex.clone();
+
+    // CRITICAL: Sync after revealing invoice address so BDK tracks it
+    carol
+        .sync_wallet()
+        .await
+        .expect("Failed to sync Carol after invoice generation");
 
     let transfer2 = alice
         .send_transfer(&carol_invoice1_string, carol_pubkey1, &fee_rate)
@@ -237,11 +248,11 @@ async fn test_multi_party_transfer_chain() {
         .await
         .expect("Failed to sync Carol after transfer 2");
 
-    verify_balance_with_retry(&mut alice, &asset_info.contract_id, 5_000, 10)
+    verify_balance_with_retry(&mut alice, &asset_info.contract_id, 5_000, 20)
         .await
         .expect("Alice should have 5,000 tokens");
 
-    verify_balance_with_retry(&mut carol, &asset_info.contract_id, 2_000, 10)
+    verify_balance_with_retry(&mut carol, &asset_info.contract_id, 2_000, 20)
         .await
         .expect("Carol should have 2,000 tokens");
 
@@ -316,23 +327,16 @@ async fn test_multi_party_transfer_chain() {
         "Alice should have RGB-occupied UTXOs (change seals from transfers)"
     );
 
-    // 	assert!(
-    // 		!bob_occupied.is_empty(),
-    // 		"Bob should have RGB-occupied UTXOs"
-    // );
-    // assert!(
-    // 		!carol_occupied.is_empty(),
-    // 		"Carol should have RGB-occupied UTXOs"
-    // );
-
-    // TODO:
-    // Note: Bob and Carol may not show RGB-occupied UTXOs in current implementation
-    // because get_occupied_utxos() queries F1r3fly state by seal IDs, and recipient
-    // wallets don't automatically track which of their UTXOs received RGB assets.
-    // This is a known limitation - balances are correct, but UTXO tracking is incomplete
-    // for recipients. Future enhancement would track recipient UTXOs from consignments.
-    println!(
-        "  Note: Recipients may not show RGB UTXOs (known limitation - balances are tracked correctly)"
+    // Recipients should also have RGB-occupied UTXOs
+    // This works now because get_occupied_utxos() queries both BDK-tracked UTXOs
+    // and claimed RGB UTXOs (which may have Tapret-modified addresses)
+    assert!(
+        !bob_occupied.is_empty(),
+        "Bob should have RGB-occupied UTXOs"
+    );
+    assert!(
+        !carol_occupied.is_empty(),
+        "Carol should have RGB-occupied UTXOs"
     );
 
     println!("\n✅ Multi-party transfer chain test passed!");
@@ -406,6 +410,11 @@ async fn test_transfer_chain_with_explicit_sync() {
     let bob_invoice_data = bob
         .generate_invoice_with_pubkey(&asset_info.contract_id, 300)
         .expect("Failed to generate invoice");
+
+    // CRITICAL: Sync after revealing invoice address so BDK tracks it
+    bob.sync_wallet()
+        .await
+        .expect("Failed to sync Bob after invoice generation");
 
     let transfer1 = alice
         .send_transfer(

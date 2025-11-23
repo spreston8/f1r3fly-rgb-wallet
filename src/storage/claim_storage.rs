@@ -54,7 +54,7 @@ pub struct PendingClaim {
     /// Witness identifier (e.g. "witness:a3467636:0")
     pub witness_id: String,
 
-    /// Recipient's Bitcoin address
+    /// Recipient's Bitcoin address (from invoice, pre-Tapret)
     pub recipient_address: String,
 
     /// Expected vout in the Bitcoin transaction
@@ -77,6 +77,13 @@ pub struct PendingClaim {
 
     /// Unix timestamp when claim was completed (if status is Claimed)
     pub claimed_at: Option<u64>,
+
+    /// Actual Bitcoin TXID (from consignment witness_tx, post-Tapret)
+    /// This is the REAL on-chain UTXO, not from wallet discovery
+    pub actual_txid: Option<String>,
+
+    /// Actual vout (from consignment witness_tx)
+    pub actual_vout: Option<u32>,
 }
 
 /// Storage errors
@@ -146,10 +153,20 @@ impl ClaimStorage {
                 error TEXT,
                 created_at INTEGER NOT NULL,
                 claimed_at INTEGER,
+                actual_txid TEXT,
+                actual_vout INTEGER,
                 UNIQUE(witness_id, contract_id)
             )",
             [],
         )?;
+
+        // Migration: Add actual_txid and actual_vout columns if they don't exist
+        // This is idempotent and safe to run on existing databases
+        let _ = conn.execute("ALTER TABLE pending_claims ADD COLUMN actual_txid TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE pending_claims ADD COLUMN actual_vout INTEGER",
+            [],
+        );
 
         // Indexes for fast queries
         conn.execute(
@@ -205,8 +222,8 @@ impl ClaimStorage {
         // Write to SQLite (durable)
         tx.execute(
             "INSERT INTO pending_claims (witness_id, recipient_address, expected_vout, 
-             contract_id, consignment_file, status, error, created_at, claimed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             contract_id, consignment_file, status, error, created_at, claimed_at, actual_txid, actual_vout)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 &claim.witness_id,
                 &claim.recipient_address,
@@ -217,6 +234,8 @@ impl ClaimStorage {
                 &claim.error,
                 claim.created_at,
                 claim.claimed_at,
+                &claim.actual_txid,
+                claim.actual_vout,
             ],
         )?;
 
@@ -365,6 +384,32 @@ impl ClaimStorage {
         self.query_database(Some(contract_id), None)
     }
 
+    /// Get all successfully claimed UTXOs for a contract
+    ///
+    /// Returns actual txid:vout pairs for all claimed RGB transfers.
+    /// These UTXOs need to be included in balance queries even if BDK doesn't track them
+    /// (because Tapret commitments modify the address).
+    ///
+    /// # Arguments
+    ///
+    /// * `contract_id` - Contract ID
+    ///
+    /// # Returns
+    ///
+    /// Vector of (txid, vout) tuples for claimed UTXOs
+    pub fn get_claimed_utxos(&self, contract_id: &str) -> Result<Vec<(String, u32)>, StorageError> {
+        let claimed = self.query_database(Some(contract_id), Some(ClaimStatus::Claimed))?;
+
+        let mut utxos = Vec::new();
+        for claim in claimed {
+            if let (Some(txid), Some(vout)) = (claim.actual_txid, claim.actual_vout) {
+                utxos.push((txid, vout));
+            }
+        }
+
+        Ok(utxos)
+    }
+
     /// Internal: Query database
     fn query_database(
         &self,
@@ -372,7 +417,7 @@ impl ClaimStorage {
         status_filter: Option<ClaimStatus>,
     ) -> Result<Vec<PendingClaim>, StorageError> {
         let mut query = "SELECT id, witness_id, recipient_address, expected_vout, contract_id, 
-                         consignment_file, status, error, created_at, claimed_at 
+                         consignment_file, status, error, created_at, claimed_at, actual_txid, actual_vout 
                          FROM pending_claims WHERE 1=1"
             .to_string();
 
@@ -407,6 +452,8 @@ impl ClaimStorage {
                 error: row.get(7)?,
                 created_at: row.get(8)?,
                 claimed_at: row.get(9)?,
+                actual_txid: row.get(10)?,
+                actual_vout: row.get(11)?,
             })
         })?;
 

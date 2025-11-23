@@ -415,9 +415,49 @@ pub async fn accept_consignment(
         // State is tracked on F1r3fly blockchain, not locally
         log::info!("✓ Transfer consignment accepted for existing contract");
 
-        // Store witness mapping in database for later claim
+        // PRODUCTION FIX: Extract actual UTXO from consignment witness transaction
+        // RGB Protocol approach: Don't rely on BDK address discovery for Tapret-tweaked UTXOs.
+        // Instead, get the actual txid:vout directly from the consignment's witness_txs.
         if let Some(mapping) = &consignment.witness_mapping {
-            log::info!("📝 Storing witness mapping for later claim...");
+            log::info!("📝 Extracting actual UTXO from witness transaction...");
+
+            // Get the witness transaction from consignment
+            let witness_txs = &consignment.witness_txs;
+            if witness_txs.is_empty() {
+                return Err(ConsignmentError::Invalid(
+                    "Transfer consignment missing witness transaction".to_string(),
+                ));
+            }
+
+            let witness_tx = &witness_txs[0];
+            let actual_txid = witness_tx.txid();
+
+            // RGB transfers put the recipient output at vout 0 (with Tapret commitment)
+            // This is the ACTUAL on-chain UTXO, not the address from the invoice
+            let actual_vout = mapping.expected_vout; // Should be 0
+
+            log::debug!("🔍 Actual UTXO from consignment:");
+            log::debug!("  Witness TX ID: {}", actual_txid);
+            log::debug!("  Vout: {}", actual_vout);
+            log::debug!(
+                "  Invoice address (pre-Tapret): {}",
+                mapping.recipient_address
+            );
+
+            // Verify the output exists in the transaction
+            if actual_vout as usize >= witness_tx.outputs.len() {
+                return Err(ConsignmentError::Invalid(format!(
+                    "Witness transaction does not have output at vout {}",
+                    actual_vout
+                )));
+            }
+
+            let actual_output = &witness_tx.outputs[actual_vout as usize];
+            let actual_value_sats = actual_output.value.sats_i64() as u64;
+            log::debug!("  Actual output value: {} sats", actual_value_sats);
+
+            // Convert bp::Txid to String for storage
+            let actual_txid_str = actual_txid.to_string();
 
             let claim = PendingClaim {
                 id: None,
@@ -433,18 +473,24 @@ pub async fn accept_consignment(
                     .unwrap()
                     .as_secs(),
                 claimed_at: None,
+                actual_txid: Some(actual_txid_str),
+                actual_vout: Some(actual_vout),
             };
 
             let claim_id = contracts_manager
                 .claim_storage_mut()
                 .insert_pending_claim(&claim)?;
 
-            log::info!("✓ Witness mapping stored in database (cache updated)");
+            log::info!(
+                "✓ Actual UTXO extracted and stored ({}:{})",
+                actual_txid,
+                actual_vout
+            );
 
-            // Attempt to claim immediately
+            // Attempt to claim immediately (with actual UTXO from consignment)
             log::info!("🔄 Attempting to claim witness balance...");
 
-            match attempt_claim(contracts_manager, bitcoin_wallet, contract_id, mapping).await {
+            match attempt_claim(contracts_manager, bitcoin_wallet, contract_id, &claim).await {
                 Ok(claim_result) => {
                     log::info!(
                         "✅ Claim successful! Migrated {} tokens from {} to {}",
@@ -650,53 +696,76 @@ pub async fn accept_consignment(
 
 /// Attempt to claim witness balance to real UTXO
 ///
-/// Finds the matching UTXO in the wallet and attempts to execute the claim() method
-/// to migrate balance and ownership from witness_id to real_utxo.
+/// Uses the actual UTXO from consignment (RGB Protocol approach) instead of wallet discovery.
+/// This avoids issues with Tapret-tweaked addresses not being tracked by BDK.
 ///
 /// # Arguments
 ///
 /// * `contracts_manager` - Contracts manager
-/// * `bitcoin_wallet` - Bitcoin wallet to find UTXO
+/// * `bitcoin_wallet` - Bitcoin wallet (used for logging/diagnostics)
 /// * `contract_id` - Contract ID
-/// * `mapping` - Witness mapping with claim details
+/// * `claim` - Pending claim with actual UTXO details from consignment
 ///
 /// # Returns
 ///
-/// `ClaimResult` on success, `ClaimError` if UTXO not found or claim fails
+/// `ClaimResult` on success, `ClaimError` if claim fails
 pub async fn attempt_claim(
     contracts_manager: &mut F1r3flyContractsManager,
     bitcoin_wallet: &BitcoinWallet,
     contract_id: ContractId,
-    mapping: &f1r3fly_rgb::WitnessMapping,
+    claim: &crate::storage::PendingClaim,
 ) -> Result<ClaimResult, ClaimError> {
-    // Step 1: Find recipient's actual UTXO matching the address and vout
-    let utxos: Vec<_> = bitcoin_wallet.inner().list_unspent().collect();
+    log::info!("🔍 Attempting claim for witness: {}", claim.witness_id);
+    log::debug!(
+        "  Invoice address (pre-Tapret): {}",
+        claim.recipient_address
+    );
+    log::debug!("  Expected vout: {}", claim.expected_vout);
 
-    // Get the script_pubkey for the expected recipient address
-    let expected_address = bdk_wallet::bitcoin::Address::from_str(&mapping.recipient_address)
-        .map_err(|e| ClaimError::BitcoinError(format!("Invalid address: {}", e)))?
-        .assume_checked();
+    // PRODUCTION FIX: Use actual UTXO from consignment (RGB Protocol approach)
+    // RGB Protocol design: The consignment contains the witness transaction with the
+    // Tapret-tweaked address. We extract the actual txid:vout directly from the consignment
+    // instead of relying on wallet address scanning (which fails due to Tapret modification).
 
-    let matching_utxo = utxos
-        .iter()
-        .find(|utxo| {
-            // Match by script_pubkey (derived from address) and vout
-            utxo.txout.script_pubkey == expected_address.script_pubkey()
-                && utxo.outpoint.vout == mapping.expected_vout
-        })
-        .ok_or(ClaimError::UtxoNotFound)?;
+    let (real_txid, real_vout) = if let (Some(actual_txid_str), Some(actual_vout)) =
+        (&claim.actual_txid, claim.actual_vout)
+    {
+        log::debug!("Using actual UTXO from consignment (RGB Protocol approach):");
+        log::debug!("  Actual TXID: {}", actual_txid_str);
+        log::debug!("  Actual vout: {}", actual_vout);
+
+        // Parse txid for use in claim
+        let txid = bdk_wallet::bitcoin::Txid::from_str(actual_txid_str)
+            .map_err(|e| ClaimError::BitcoinError(format!("Invalid txid: {}", e)))?;
+
+        log::debug!("  ✓ UTXO identified from consignment witness transaction");
+        (txid, actual_vout)
+    } else {
+        // Fallback to old address discovery method (for backward compatibility with old claims)
+        log::warn!("⚠️  No actual UTXO in claim, falling back to address discovery (legacy)");
+
+        let expected_address = bdk_wallet::bitcoin::Address::from_str(&claim.recipient_address)
+            .map_err(|e| ClaimError::BitcoinError(format!("Invalid address: {}", e)))?
+            .assume_checked();
+        let expected_spk = expected_address.script_pubkey();
+
+        let utxos: Vec<_> = bitcoin_wallet.inner().list_unspent().collect();
+        let matched_utxo = utxos
+            .iter()
+            .find(|utxo| utxo.txout.script_pubkey == expected_spk);
+
+        let utxo = matched_utxo.ok_or_else(|| ClaimError::UtxoNotFound)?;
+
+        (utxo.outpoint.txid, utxo.outpoint.vout)
+    };
 
     // Step 2: Format real UTXO identifier (normalized, little-endian)
     use bitcoin::hashes::Hash;
-    let txid_bytes = matching_utxo.outpoint.txid.to_byte_array();
-    let real_utxo = format!(
-        "{}:{}",
-        hex::encode(txid_bytes),
-        matching_utxo.outpoint.vout
-    );
+    let txid_bytes = real_txid.to_byte_array();
+    let real_utxo = format!("{}:{}", hex::encode(txid_bytes), real_vout);
 
     log::debug!("  Found matching UTXO: {}", real_utxo);
-    log::debug!("  Will claim from: {}", mapping.witness_id);
+    log::debug!("  Will claim from: {}", claim.witness_id);
 
     // Step 3: Generate claim signature
     // Sign message: (witness_id, real_utxo)
@@ -707,7 +776,7 @@ pub async fn attempt_claim(
         .map_err(|e| ClaimError::SignatureFailed(e.to_string()))?;
 
     let signature =
-        f1r3fly_rgb::generate_claim_signature(&mapping.witness_id, &real_utxo, &signing_key)
+        f1r3fly_rgb::generate_claim_signature(&claim.witness_id, &real_utxo, &signing_key)
             .map_err(|e| ClaimError::SignatureFailed(e.to_string()))?;
 
     // Step 4: Call contract.claim()
@@ -724,7 +793,7 @@ pub async fn attempt_claim(
         .call_method(
             "claim",
             &[
-                ("witness_id", StrictVal::from(mapping.witness_id.as_str())),
+                ("witness_id", StrictVal::from(claim.witness_id.as_str())),
                 ("real_utxo", StrictVal::from(real_utxo.as_str())),
                 ("claimantSignatureHex", StrictVal::from(signature.as_str())),
             ],
@@ -746,7 +815,7 @@ pub async fn attempt_claim(
 
     Ok(ClaimResult {
         migrated_balance: 0, // Cannot extract from result easily
-        from: mapping.witness_id.clone(),
+        from: claim.witness_id.clone(),
         to: real_utxo,
     })
 }

@@ -89,6 +89,9 @@ pub fn generate_invoice(
         addr_info.address
     };
 
+    // DIAGNOSTIC: Log what address is being used in the invoice
+    log::debug!("🔍 Invoice Address: {}", address);
+
     // Determine network parameters
     let network_type = bitcoin_wallet.network();
     let network = network_type.to_bitcoin_network();
@@ -106,6 +109,9 @@ pub fn generate_invoice(
         Consensus::Bitcoin,
         testnet,
     )?;
+
+    // DIAGNOSTIC: Confirm the generated invoice
+    log::debug!("🔍 Generated Invoice: {}", generated.invoice.to_string());
 
     Ok(generated)
 }

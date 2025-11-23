@@ -416,6 +416,10 @@ pub async fn send_transfer(
     // Get recipient address from invoice
     let network = bitcoin_wallet.network().to_bitcoin_network();
     let recipient_addr_str = f1r3fly_rgb::get_recipient_address(&parsed.beneficiary, network)?;
+
+    // DIAGNOSTIC: Log the address extracted from invoice
+    log::debug!("🔍 Address from Invoice: {}", recipient_addr_str);
+
     let recipient_addr = recipient_addr_str
         .parse::<bdk_wallet::bitcoin::Address<bdk_wallet::bitcoin::address::NetworkUnchecked>>()
         .map_err(|e| TransferError::BuildFailed(format!("Invalid recipient address: {}", e)))?
@@ -527,6 +531,26 @@ pub async fn send_transfer(
 
     let txid = tx.compute_txid();
     log::debug!("  Witness txid: {}", txid);
+
+    // DIAGNOSTIC: Log transaction outputs to verify recipient address
+    log::debug!("🔍 Bitcoin TX Outputs ({} outputs):", tx.output.len());
+    for (vout, output) in tx.output.iter().enumerate() {
+        use bdk_wallet::bitcoin::Address;
+        if let Ok(addr) = Address::from_script(&output.script_pubkey, network) {
+            log::debug!(
+                "  - vout {}: {} ({} sats)",
+                vout,
+                addr,
+                output.value.to_sat()
+            );
+        } else {
+            log::debug!(
+                "  - vout {}: <unparseable> ({} sats)",
+                vout,
+                output.value.to_sat()
+            );
+        }
+    }
 
     esplora_client
         .inner()

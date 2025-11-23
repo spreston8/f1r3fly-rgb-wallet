@@ -417,18 +417,20 @@ impl WalletManager {
             return Ok(());
         }
 
-        log::info!("🔄 Retrying {} pending claim(s)...", pending.len());
+        // DIAGNOSTIC: Show wallet state before claim attempts
+        let total_utxos = bitcoin_wallet.inner().list_unspent().count();
+        let revealed_addrs = bitcoin_wallet.inner().spk_index().revealed_spks(..).count();
+        log::info!(
+            "🔄 Retrying {} pending claim(s)... [wallet state: {} UTXOs, {} revealed addresses]",
+            pending.len(),
+            total_utxos,
+            revealed_addrs
+        );
 
         for claim in pending {
             if claim.status != ClaimStatus::Pending {
                 continue;
             }
-
-            let mapping = f1r3fly_rgb::WitnessMapping {
-                witness_id: claim.witness_id.clone(),
-                recipient_address: claim.recipient_address.clone(),
-                expected_vout: claim.expected_vout,
-            };
 
             let contract_id =
                 hypersonic::ContractId::from_str(&claim.contract_id).map_err(|e| {
@@ -440,7 +442,7 @@ impl WalletManager {
                     ))
                 })?;
 
-            match attempt_claim(contracts_manager, bitcoin_wallet, contract_id, &mapping).await {
+            match attempt_claim(contracts_manager, bitcoin_wallet, contract_id, &claim).await {
                 Ok(_) => {
                     log::info!("✅ Claim succeeded for {}", claim.witness_id);
                     contracts_manager
@@ -448,8 +450,13 @@ impl WalletManager {
                         .mark_claim_completed(claim.id.unwrap())?;
                 }
                 Err(ClaimError::UtxoNotFound) => {
-                    log::debug!("⏳ UTXO still not found for {}", claim.witness_id);
-                    // Keep as Pending
+                    log::warn!(
+                        "⏳ UTXO not found for claim retry: witness={}, address={}, vout={} - keeping as Pending",
+                        claim.witness_id,
+                        claim.recipient_address,
+                        claim.expected_vout
+                    );
+                    // Keep as Pending - will retry on next sync
                 }
                 Err(e) => {
                     log::error!("❌ Claim failed for {}: {}", claim.witness_id, e);

@@ -36,10 +36,10 @@ jobs:
           sudo apt-get install -y protobuf-compiler
       
       - name: Run keys tests
-        run: cargo test --test keys_test
+        run: cargo test --test keys_test -- --nocapture 2>&1 | tee test-keys-output.log || (cat test-keys-output.log && exit 1)
       
       - name: Run storage tests
-        run: cargo test --test storage_test
+        run: cargo test --test storage_test -- --nocapture 2>&1 | tee test-storage-output.log || (cat test-storage-output.log && exit 1)
       
       - name: Upload test results
         if: always()
@@ -48,6 +48,17 @@ jobs:
           name: unit-test-results
           path: target/debug/deps/*.log
           if-no-files-found: ignore
+          retention-days: 7
+      
+      - name: Upload failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-failed-logs
+          path: |
+            test-keys-output.log
+            test-storage-output.log
+            target/debug/deps/*.log
           retention-days: 7
 
   # ==========================================================================
@@ -128,7 +139,7 @@ jobs:
           FIREFLY_PRIVATE_KEY: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
           BITCOIN_DATADIR: /tmp/bitcoin-ci
         run: |
-          cargo test --test bitcoin_integration_tests -- --test-threads=1
+          cargo test --test bitcoin_integration_tests -- --test-threads=1 --nocapture 2>&1 | tee test-bitcoin-output.log || (cat test-bitcoin-output.log && exit 1)
       
       - name: Collect service logs
         if: always()
@@ -140,6 +151,16 @@ jobs:
         with:
           name: bitcoin-integration-logs
           path: ci-logs-bitcoin/
+          retention-days: 7
+      
+      - name: Upload failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitcoin-integration-failed-logs
+          path: |
+            test-bitcoin-output.log
+            ci-logs-bitcoin/
           retention-days: 7
       
       - name: Stop services
@@ -208,7 +229,7 @@ jobs:
           FIREFLY_HTTP_PORT: 40403
           BITCOIN_DATADIR: /tmp/bitcoin-ci
         run: |
-          cargo test --test f1r3fly_integration_tests -- --test-threads=1
+          cargo test --test f1r3fly_integration_tests -- --test-threads=1 --nocapture 2>&1 | tee test-f1r3fly-output.log || (cat test-f1r3fly-output.log && exit 1)
       
       - name: Collect service logs
         if: always()
@@ -228,6 +249,19 @@ jobs:
         with:
           name: f1r3fly-wallet-data
           path: |
+            /tmp/f1r3fly-test-*
+            ~/.f1r3fly-rgb-wallet
+          if-no-files-found: ignore
+          retention-days: 7
+      
+      - name: Upload failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: f1r3fly-integration-failed-logs
+          path: |
+            test-f1r3fly-output.log
+            ci-logs-f1r3fly/
             /tmp/f1r3fly-test-*
             ~/.f1r3fly-rgb-wallet
           if-no-files-found: ignore
@@ -299,7 +333,7 @@ jobs:
           FIREFLY_HTTP_PORT: 40403
           BITCOIN_DATADIR: /tmp/bitcoin-ci
         run: |
-          cargo test --test list_utxos_integration_test -- --test-threads=1 test_bitcoin_layer_list_utxos test_rgb_layer_seal_info test_manager_orchestration_with_filters test_multiple_rgb_assets test_data_structures_and_edge_cases
+          cargo test --test list_utxos_integration_test -- --test-threads=1 --nocapture test_bitcoin_layer_list_utxos test_rgb_layer_seal_info test_manager_orchestration_with_filters test_multiple_rgb_assets test_data_structures_and_edge_cases 2>&1 | tee test-list-utxos-output.log || (cat test-list-utxos-output.log && exit 1)
       
       - name: Collect service logs
         if: always()
@@ -319,6 +353,19 @@ jobs:
         with:
           name: list-utxos-wallet-data
           path: |
+            /tmp/f1r3fly-test-*
+            ~/.f1r3fly-rgb-wallet
+          if-no-files-found: ignore
+          retention-days: 7
+      
+      - name: Upload failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: list-utxos-integration-failed-logs
+          path: |
+            test-list-utxos-output.log
+            ci-logs-list-utxos/
             /tmp/f1r3fly-test-*
             ~/.f1r3fly-rgb-wallet
           if-no-files-found: ignore
@@ -391,7 +438,7 @@ jobs:
           FIREFLY_HTTP_PORT: 40403
         run: |
           chmod +x test_cli.sh
-          ./test_cli.sh
+          ./test_cli.sh 2>&1 | tee test-cli-output.log || (cat test-cli-output.log && exit 1)
       
       - name: Upload CLI test logs
         if: always()
@@ -411,6 +458,17 @@ jobs:
         with:
           name: cli-test-logs-services
           path: ci-logs-cli/
+          retention-days: 7
+      
+      - name: Upload failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-test-failed-logs
+          path: |
+            test-cli-output.log
+            logs/test_cli_*.log
+            ci-logs-cli/
           retention-days: 7
       
       - name: Stop services

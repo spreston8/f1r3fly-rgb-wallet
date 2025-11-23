@@ -75,6 +75,8 @@ fn test_insert_claim_and_retrieve_with_cache() {
         error: None,
         created_at: 1700000000,
         claimed_at: None,
+        actual_txid: None,
+        actual_vout: None,
     };
 
     // Insert claim (should write to DB and cache)
@@ -121,6 +123,8 @@ fn test_cache_invalidation_and_rebuild() {
             error: None,
             created_at: 1700000000 + i,
             claimed_at: None,
+            actual_txid: None,
+            actual_vout: None,
         };
         storage.insert_pending_claim(&claim).unwrap();
     }
@@ -161,6 +165,8 @@ fn test_update_claim_status_atomic_transaction() {
         error: None,
         created_at: 1700000000,
         claimed_at: None,
+        actual_txid: None,
+        actual_vout: None,
     };
 
     let claim_id = storage.insert_pending_claim(&claim).unwrap();
@@ -227,6 +233,8 @@ fn test_multiple_contracts_query_filtering() {
             error: None,
             created_at: 1700000000 + i,
             claimed_at: None,
+            actual_txid: None,
+            actual_vout: None,
         };
         storage.insert_pending_claim(&claim).unwrap();
     }
@@ -244,6 +252,8 @@ fn test_multiple_contracts_query_filtering() {
             error: None,
             created_at: 1700000000 + i,
             claimed_at: None,
+            actual_txid: None,
+            actual_vout: None,
         };
         storage.insert_pending_claim(&claim).unwrap();
     }

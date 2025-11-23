@@ -18,6 +18,7 @@ mod complete_transfer_test;
 mod genesis_consignment_test;
 mod invoice_operations_test;
 mod multi_transfer_chain_test;
+mod utxo_discovery_timing_test;
 mod validation_security_test;
 mod wallet_state_persistence_test;
 
@@ -516,6 +517,17 @@ pub async fn verify_balance_with_retry(
     );
 
     for attempt in 1..=max_attempts {
+        // CRITICAL: Sync wallet before checking balance to discover new UTXOs
+        // and trigger retry_pending_claims for any pending witness migrations
+        if let Err(e) = manager.sync_wallet().await {
+            log::debug!(
+                "Sync failed during balance retry: {} (attempt {}/{})",
+                e,
+                attempt,
+                max_attempts
+            );
+        }
+
         match manager.get_asset_balance(contract_id).await {
             Ok(balance) => {
                 if balance.total == expected {

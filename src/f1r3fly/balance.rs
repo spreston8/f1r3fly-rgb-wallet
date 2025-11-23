@@ -246,6 +246,12 @@ pub async fn get_asset_balance(
         )
     };
 
+    // Get claimed UTXOs early (before borrowing contracts_mut)
+    let claimed_utxos = contracts_manager
+        .claim_storage()
+        .get_claimed_utxos(contract_id_str)
+        .unwrap_or_default();
+
     // Get contract instance
     let contract = contracts_manager
         .contracts_mut()
@@ -254,13 +260,13 @@ pub async fn get_asset_balance(
 
     // Get all wallet UTXOs for balance queries
     // RGB tracks balances by Bitcoin UTXO identifiers
-    let utxos: Vec<_> = bitcoin_wallet.inner().list_unspent().collect();
+    let bdk_utxos: Vec<_> = bitcoin_wallet.inner().list_unspent().collect();
 
     let mut utxo_balances = Vec::new();
     let mut total_balance = 0u64;
 
-    // Query balance for each actual UTXO
-    for utxo in &utxos {
+    // Query balance for each BDK-tracked UTXO
+    for utxo in &bdk_utxos {
         let seal = convert_outpoint_to_seal(&utxo.outpoint)?;
 
         match contract.balance(&seal).await {
@@ -285,6 +291,54 @@ pub async fn get_asset_balance(
                     utxo.outpoint.vout,
                     e
                 );
+            }
+        }
+    }
+
+    // PRODUCTION FIX: Also query RGB-specific claimed UTXOs
+    // These UTXOs may have Tapret-modified addresses that BDK doesn't track,
+    // so we maintain separate tracking in our claim storage.
+    for (txid_str, vout) in claimed_utxos {
+        // Skip if already queried via BDK
+        let already_queried = bdk_utxos
+            .iter()
+            .any(|u| u.outpoint.txid.to_string() == txid_str && u.outpoint.vout == vout);
+
+        if already_queried {
+            continue;
+        }
+
+        // Parse txid and create outpoint
+        use bdk_wallet::bitcoin::Txid;
+        use std::str::FromStr;
+        let txid = match Txid::from_str(&txid_str) {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("Invalid txid in claimed UTXO: {}: {}", txid_str, e);
+                continue;
+            }
+        };
+
+        let outpoint = bdk_wallet::bitcoin::OutPoint::new(txid, vout);
+        let seal = convert_outpoint_to_seal(&outpoint)?;
+
+        match contract.balance(&seal).await {
+            Ok(amount) if amount > 0 => {
+                log::debug!(
+                    "RGB UTXO {}:{} has balance: {} (from claim tracking)",
+                    txid,
+                    vout,
+                    amount
+                );
+                utxo_balances.push(UtxoBalance {
+                    outpoint: format!("{}:{}", txid, vout),
+                    amount,
+                });
+                total_balance += amount;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                log::debug!("Balance query failed for RGB UTXO {}:{}: {}", txid, vout, e);
             }
         }
     }
@@ -331,7 +385,23 @@ pub async fn get_occupied_utxos(
 
     // Get all contracts
     let contract_ids = contracts_manager.contracts().list();
-    let utxos: Vec<_> = bitcoin_wallet.inner().list_unspent().collect();
+    let bdk_utxos: Vec<_> = bitcoin_wallet.inner().list_unspent().collect();
+
+    // Get all claimed RGB UTXOs across all contracts (from claim storage)
+    // These UTXOs may have Tapret-modified addresses that BDK doesn't track
+    let mut all_claimed_utxos: Vec<(String, u32, String)> = Vec::new(); // (txid, vout, contract_id)
+
+    for contract_id in &contract_ids {
+        let contract_id_str = contract_id.to_string();
+        if let Ok(claimed) = contracts_manager
+            .claim_storage()
+            .get_claimed_utxos(&contract_id_str)
+        {
+            for (txid, vout) in claimed {
+                all_claimed_utxos.push((txid, vout, contract_id_str.clone()));
+            }
+        }
+    }
 
     // Query each contract for each UTXO
     for contract_id in contract_ids {
@@ -349,14 +419,61 @@ pub async fn get_occupied_utxos(
             None => continue,
         };
 
-        // Query balance for each UTXO
-        for utxo in &utxos {
+        // Query balance for each BDK-tracked UTXO
+        for utxo in &bdk_utxos {
             let outpoint_str = format!("{}:{}", utxo.outpoint.txid, utxo.outpoint.vout);
             let seal = convert_outpoint_to_seal(&utxo.outpoint)?;
 
             if let Ok(amount) = contract.balance(&seal).await {
                 if amount > 0 {
                     // Store or aggregate
+                    utxo_map.insert(
+                        outpoint_str,
+                        (contract_id_str.clone(), ticker.clone(), amount),
+                    );
+                }
+            }
+        }
+
+        // PRODUCTION FIX: Also query claimed RGB UTXOs
+        // These may have Tapret-modified addresses not tracked by BDK
+        for (txid_str, vout, claimed_contract_id) in &all_claimed_utxos {
+            // Skip if this contract doesn't match
+            if claimed_contract_id != &contract_id_str {
+                continue;
+            }
+
+            // Skip if already queried via BDK
+            let already_queried = bdk_utxos
+                .iter()
+                .any(|u| u.outpoint.txid.to_string() == *txid_str && u.outpoint.vout == *vout);
+            if already_queried {
+                continue;
+            }
+
+            // Parse txid and create outpoint
+            use bdk_wallet::bitcoin::Txid;
+            use std::str::FromStr;
+            let txid = match Txid::from_str(txid_str) {
+                Ok(t) => t,
+                Err(e) => {
+                    log::warn!("Invalid txid in claimed UTXO: {}: {}", txid_str, e);
+                    continue;
+                }
+            };
+
+            let outpoint = bdk_wallet::bitcoin::OutPoint::new(txid, *vout);
+            let outpoint_str = format!("{}:{}", txid, vout);
+            let seal = convert_outpoint_to_seal(&outpoint)?;
+
+            if let Ok(amount) = contract.balance(&seal).await {
+                if amount > 0 {
+                    log::debug!(
+                        "RGB UTXO {}:{} occupied by {} (from claim tracking)",
+                        txid,
+                        vout,
+                        ticker
+                    );
                     utxo_map.insert(
                         outpoint_str,
                         (contract_id_str.clone(), ticker.clone(), amount),

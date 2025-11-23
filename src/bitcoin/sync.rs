@@ -3,6 +3,7 @@
 use crate::bitcoin::{BitcoinWallet, BitcoinWalletError, EsploraClient, NetworkError};
 use bdk_esplora::EsploraExt;
 use bdk_wallet::bitcoin::BlockHash;
+use bdk_wallet::KeychainKind;
 
 /// Errors that can occur during sync operations
 #[derive(Debug, thiserror::Error)]
@@ -89,6 +90,25 @@ pub fn sync_wallet(
 
     // Build sync request with revealed script pubkeys
     let request = wallet.inner().start_sync_with_revealed_spks();
+
+    // DIAGNOSTIC: Log what addresses BDK is actually tracking
+    let derivation_index = wallet.inner().derivation_index(KeychainKind::External);
+    if let Some(last_index) = derivation_index {
+        log::debug!(
+            "🔍 BDK External Derivation Index: {} (will scan 0..={})",
+            last_index,
+            last_index
+        );
+
+        // Sample first few addresses to see what BDK knows about
+        for index in 0..=last_index.min(5) {
+            let addr_info = wallet.inner().peek_address(KeychainKind::External, index);
+            log::debug!("  - Index {}: {} (revealed)", index, addr_info.address);
+        }
+    } else {
+        log::debug!("🔍 BDK External Derivation Index: None (no addresses revealed yet)");
+    }
+
     log::debug!("Syncing with revealed script pubkeys");
 
     // Perform full scan
