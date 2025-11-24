@@ -206,6 +206,51 @@ async fn test_complete_transfer_alice_to_bob() {
         .expect("Bob balance mismatch");
 
     // ========================================================================
+    // Step 9.5: Verify claim was recorded in database (Production Fix Validation)
+    // ========================================================================
+    // With the production fix, the actual UTXO should be extracted from the
+    // consignment witness transaction and stored in the claim record.
+    let claim_storage = bob
+        .f1r3fly_contracts()
+        .expect("Bob should have contracts manager")
+        .claim_storage();
+
+    let claims = claim_storage
+        .get_all_claims(&asset_info.contract_id)
+        .expect("Failed to query claims");
+
+    assert_eq!(claims.len(), 1, "Should have exactly 1 claim record");
+
+    let claim = &claims[0];
+    assert_eq!(
+        claim.status,
+        f1r3fly_rgb_wallet::storage::ClaimStatus::Claimed,
+        "Claim should have status Claimed (auto-claim succeeded)"
+    );
+    assert!(
+        claim.claimed_at.is_some(),
+        "Claim should have claimed_at timestamp"
+    );
+
+    // Production fix validation: actual UTXO should be extracted from consignment
+    assert!(
+        claim.actual_txid.is_some(),
+        "Claim should have actual_txid from consignment witness transaction"
+    );
+    assert!(
+        claim.actual_vout.is_some(),
+        "Claim should have actual_vout from consignment witness transaction"
+    );
+
+    println!(
+        "✓ Claim verified: {} (status: {:?}, actual UTXO: {}:{})",
+        claim.witness_id,
+        claim.status,
+        claim.actual_txid.as_ref().unwrap(),
+        claim.actual_vout.unwrap()
+    );
+
+    // ========================================================================
     // Step 10: Verify total supply conservation
     // ========================================================================
     let alice_balance = alice

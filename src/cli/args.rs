@@ -227,6 +227,51 @@ pub enum Commands {
         #[arg(short, long)]
         password: String,
     },
+
+    /// Send RGB asset transfer using an invoice
+    SendTransfer {
+        /// RGB invoice from recipient
+        #[arg(short, long)]
+        invoice: String,
+
+        /// Recipient's F1r3fly public key (hex)
+        #[arg(long)]
+        recipient_pubkey: String,
+
+        /// Fee rate in sat/vB (optional)
+        #[arg(long)]
+        fee_rate: Option<f32>,
+
+        /// Password to decrypt the wallet
+        #[arg(short, long)]
+        password: String,
+    },
+
+    /// Accept RGB consignment (transfer or genesis)
+    AcceptConsignment {
+        /// Path to consignment file
+        #[arg(short, long)]
+        consignment_path: String,
+
+        /// Password to decrypt the wallet
+        #[arg(short, long)]
+        password: String,
+    },
+
+    /// List RGB claim history
+    ListClaims {
+        /// Optional: filter by contract ID
+        #[arg(short, long)]
+        contract_id: Option<String>,
+
+        /// Output format: table, json
+        #[arg(long, short, default_value = "table")]
+        format: String,
+
+        /// Password to decrypt the wallet
+        #[arg(short, long)]
+        password: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -267,4 +312,7 @@ pub enum WalletAction {
 
     /// List all wallets
     List,
+
+    /// Get F1r3fly public key for a wallet
+    GetF1r3flyPubkey,
 }

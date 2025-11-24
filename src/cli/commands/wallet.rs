@@ -131,6 +131,44 @@ pub fn list(overrides: ConfigOverrides) -> Result<(), WalletCommandError> {
     Ok(())
 }
 
+/// Get F1r3fly public key for a wallet
+///
+/// Reads the public key from encrypted keys file (public key itself is not encrypted).
+/// No password required since it's public information meant to be shared.
+pub fn get_f1r3fly_pubkey(
+    wallet_name: String,
+    overrides: ConfigOverrides,
+) -> Result<(), WalletCommandError> {
+    // Load config
+    let config = load_config(None, overrides)?;
+    let custom_base = config.wallets_dir.as_deref();
+
+    // Build path to keys.json
+    let wallet_path = crate::storage::file_system::wallet_dir(&wallet_name, custom_base)?;
+    let keys_path = wallet_path.join("keys.json");
+
+    // Read encrypted keys file
+    let keys_json = std::fs::read_to_string(&keys_path).map_err(|e| {
+        WalletCommandError::FileSystem(crate::storage::file_system::FileSystemError::Io(e))
+    })?;
+
+    // Parse JSON to get EncryptedWalletKeys
+    let encrypted_keys: crate::storage::models::EncryptedWalletKeys =
+        serde_json::from_str(&keys_json).map_err(|e| {
+            WalletCommandError::FileSystem(
+                crate::storage::file_system::FileSystemError::Serialization(e),
+            )
+        })?;
+
+    // Display public key (not encrypted, safe to show)
+    println!("F1r3fly Public Key:");
+    println!("  {}", encrypted_keys.f1r3fly_public_key);
+    println!();
+    println!("💡 Share this public key with senders who want to transfer RGB assets to you.");
+
+    Ok(())
+}
+
 fn format_network(network: NetworkType) -> &'static str {
     match network {
         NetworkType::Regtest => "Regtest",

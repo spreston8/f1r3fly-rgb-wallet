@@ -1474,6 +1474,46 @@ impl WalletManager {
 
         Ok(response)
     }
+
+    /// List RGB claims with optional contract filter
+    ///
+    /// Returns all claims (pending, claimed, failed) for the specified contract,
+    /// or all claims if no contract is specified.
+    ///
+    /// # Arguments
+    ///
+    /// * `contract_id` - Optional contract ID to filter claims
+    ///
+    /// # Returns
+    ///
+    /// Vector of pending claims
+    ///
+    /// # Errors
+    ///
+    /// Returns error if wallet not loaded or storage query fails
+    pub fn list_claims(
+        &self,
+        contract_id: Option<&str>,
+    ) -> Result<Vec<crate::storage::PendingClaim>, ManagerError> {
+        let contracts = self
+            .f1r3fly_contracts
+            .as_ref()
+            .ok_or(ManagerError::WalletNotLoaded)?;
+
+        if let Some(cid) = contract_id {
+            // Get all claims for specific contract
+            contracts
+                .claim_storage()
+                .get_all_claims(cid)
+                .map_err(ManagerError::Storage)
+        } else {
+            // Get all pending claims across all contracts
+            contracts
+                .claim_storage()
+                .get_pending_claims(None)
+                .map_err(ManagerError::Storage)
+        }
+    }
 }
 
 /// Apply filters to a list of UTXOs

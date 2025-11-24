@@ -56,6 +56,14 @@ fn main() {
             } => commands::wallet::import(name, mnemonic, password, overrides).map_err(Into::into),
 
             WalletAction::List => commands::wallet::list(overrides).map_err(Into::into),
+
+            WalletAction::GetF1r3flyPubkey => match cli.wallet.as_deref() {
+                Some(wallet_name) => {
+                    commands::wallet::get_f1r3fly_pubkey(wallet_name.to_string(), overrides)
+                        .map_err(Into::into)
+                }
+                None => Err("Wallet name required (use --wallet <name>)".into()),
+            },
         },
 
         Commands::Sync { password } => match tokio::runtime::Runtime::new() {
@@ -212,6 +220,57 @@ fn main() {
                     confirmed_only,
                     min_amount,
                     format,
+                    overrides,
+                ))
+                .map_err(Into::into),
+            Err(e) => Err(format!("Failed to create async runtime: {}", e).into()),
+        },
+
+        Commands::SendTransfer {
+            invoice,
+            recipient_pubkey,
+            fee_rate,
+            password,
+        } => match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt
+                .block_on(commands::transfer::send_transfer(
+                    cli.wallet,
+                    invoice,
+                    recipient_pubkey,
+                    fee_rate,
+                    password,
+                    overrides,
+                ))
+                .map_err(Into::into),
+            Err(e) => Err(format!("Failed to create async runtime: {}", e).into()),
+        },
+
+        Commands::AcceptConsignment {
+            consignment_path,
+            password,
+        } => match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt
+                .block_on(commands::transfer::accept_consignment(
+                    cli.wallet,
+                    consignment_path,
+                    password,
+                    overrides,
+                ))
+                .map_err(Into::into),
+            Err(e) => Err(format!("Failed to create async runtime: {}", e).into()),
+        },
+
+        Commands::ListClaims {
+            contract_id,
+            format,
+            password,
+        } => match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt
+                .block_on(commands::transfer::list_claims(
+                    cli.wallet,
+                    contract_id,
+                    format,
+                    password,
                     overrides,
                 ))
                 .map_err(Into::into),

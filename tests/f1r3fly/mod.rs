@@ -14,6 +14,7 @@ pub use crate::common::TestBitcoinEnv;
 // Test modules
 mod asset_issuance_test;
 mod balance_queries_test;
+mod claim_flow_test;
 mod complete_transfer_test;
 mod genesis_consignment_test;
 mod invoice_operations_test;

@@ -339,6 +339,75 @@ async fn test_multi_party_transfer_chain() {
         "Carol should have RGB-occupied UTXOs"
     );
 
+    // ========================================================================
+    // Verify claims were recorded for recipients
+    // ========================================================================
+    println!("\n📊 Verifying claim storage for recipients");
+
+    // Bob should have 1 claim (Transfer 1: Alice → Bob)
+    let bob_claim_storage = bob
+        .f1r3fly_contracts()
+        .expect("Bob should have contracts manager")
+        .claim_storage();
+
+    let bob_claims = bob_claim_storage
+        .get_all_claims(&asset_info.contract_id)
+        .expect("Failed to query Bob's claims");
+
+    assert_eq!(bob_claims.len(), 1, "Bob should have 1 claim record");
+    assert_eq!(
+        bob_claims[0].status,
+        f1r3fly_rgb_wallet::storage::ClaimStatus::Claimed,
+        "Bob's claim should be Claimed"
+    );
+    assert!(
+        bob_claims[0].actual_txid.is_some(),
+        "Bob's claim should have actual_txid from consignment"
+    );
+    assert!(
+        bob_claims[0].actual_vout.is_some(),
+        "Bob's claim should have actual_vout from consignment"
+    );
+
+    println!(
+        "  ✓ Bob's claim: {} ({}:{})",
+        bob_claims[0].witness_id,
+        bob_claims[0].actual_txid.as_ref().unwrap(),
+        bob_claims[0].actual_vout.unwrap()
+    );
+
+    // Carol should have 1 claim (Transfer 2: Alice → Carol)
+    let carol_claim_storage = carol
+        .f1r3fly_contracts()
+        .expect("Carol should have contracts manager")
+        .claim_storage();
+
+    let carol_claims = carol_claim_storage
+        .get_all_claims(&asset_info.contract_id)
+        .expect("Failed to query Carol's claims");
+
+    assert_eq!(carol_claims.len(), 1, "Carol should have 1 claim record");
+    assert_eq!(
+        carol_claims[0].status,
+        f1r3fly_rgb_wallet::storage::ClaimStatus::Claimed,
+        "Carol's claim should be Claimed"
+    );
+    assert!(
+        carol_claims[0].actual_txid.is_some(),
+        "Carol's claim should have actual_txid from consignment"
+    );
+    assert!(
+        carol_claims[0].actual_vout.is_some(),
+        "Carol's claim should have actual_vout from consignment"
+    );
+
+    println!(
+        "  ✓ Carol's claim: {} ({}:{})",
+        carol_claims[0].witness_id,
+        carol_claims[0].actual_txid.as_ref().unwrap(),
+        carol_claims[0].actual_vout.unwrap()
+    );
+
     println!("\n✅ Multi-party transfer chain test passed!");
 }
 
