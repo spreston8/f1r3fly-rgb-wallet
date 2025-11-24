@@ -208,12 +208,8 @@ pub async fn send_transfer(
     // Query balance using actual genesis UTXO identifier
     // RGB tracks balances by Bitcoin UTXO identifiers (txid:vout)
     // Do this BEFORE getting mutable reference to contract
-    let genesis_seal_id = {
-        use amplify::ByteArray;
-        let txid_hex = hex::encode(genesis_seal.primary.txid.to_byte_array());
-        let vout = genesis_seal.primary.vout.into_u32();
-        format!("{}:{}", txid_hex, vout)
-    };
+    // CRITICAL: Use serialize_seal() to ensure correct big-endian format
+    let genesis_seal_id = f1r3fly_rgb::contract::F1r3flyRgbContract::serialize_seal(&genesis_seal);
 
     log::debug!("Querying balance for genesis UTXO: {}", genesis_seal_id);
 
@@ -291,10 +287,14 @@ pub async fn send_transfer(
     let (to_seal_id, witness_mapping) = match &recipient_seal.primary {
         WOutpoint::Extern(outpoint) => {
             // Recipient UTXO already exists (rare case)
-            use amplify::ByteArray;
-            let txid_hex = hex::encode(outpoint.txid.to_byte_array());
-            let vout = outpoint.vout.into_u32();
-            (format!("{}:{}", txid_hex, vout), None) // No witness mapping needed
+            // CRITICAL: Use serialize_seal() to ensure correct big-endian format
+            let recipient_txo_seal = TxoSeal {
+                primary: *outpoint,
+                secondary: recipient_seal.secondary.clone(),
+            };
+            let seal_id =
+                f1r3fly_rgb::contract::F1r3flyRgbContract::serialize_seal(&recipient_txo_seal);
+            (seal_id, None) // No witness mapping needed
         }
         WOutpoint::Wout(vout) => {
             // Witness output: UTXO will be created in this transfer

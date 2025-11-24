@@ -127,68 +127,31 @@ pub async fn get_rgb_balance(
     // Get all contracts from manager
     let contract_ids = contracts_manager.contracts().list();
 
-    // Get all wallet UTXOs
-    let utxos: Vec<_> = bitcoin_wallet.inner().list_unspent().collect();
+    log::info!(
+        "📊 get_rgb_balance: Querying {} contracts",
+        contract_ids.len()
+    );
 
-    // Query balance for each contract
+    // Query balance for each contract using get_asset_balance()
+    // This ensures we use the full logic including claimed UTXOs fallback
     for contract_id in contract_ids {
         let contract_id_str = contract_id.to_string();
 
-        // Get asset metadata from genesis info (clone early to avoid borrow conflicts)
-        let (ticker, name, precision) = match contracts_manager.get_genesis_utxo(&contract_id_str) {
-            Some(info) => (info.ticker.clone(), info.name.clone(), info.precision),
-            None => continue, // Skip assets without genesis info
-        };
+        log::info!("  Querying contract: {}", contract_id_str);
 
-        // Get contract instance for balance queries
-        let contract = match contracts_manager.contracts_mut().get(&contract_id) {
-            Some(c) => c,
-            None => continue, // Skip if contract not found
-        };
-
-        let mut utxo_balances = Vec::new();
-        let mut total_balance = 0u64;
-
-        // Query balance for each UTXO
-        for utxo in &utxos {
-            // Convert BDK OutPoint to TxoSeal for RGB query
-            let seal = convert_outpoint_to_seal(&utxo.outpoint)?;
-
-            // Query balance from F1r3node contract
-            match contract.balance(&seal).await {
-                Ok(amount) if amount > 0 => {
-                    utxo_balances.push(UtxoBalance {
-                        outpoint: format!("{}:{}", utxo.outpoint.txid, utxo.outpoint.vout),
-                        amount,
-                    });
-                    total_balance += amount;
-                }
-                Ok(_) => {
-                    // Zero balance, skip
-                }
-                Err(e) => {
-                    // Log error but continue (UTXO might not hold this asset)
-                    log::debug!(
-                        "Balance query failed for UTXO {}:{} on contract {}: {}",
-                        utxo.outpoint.txid,
-                        utxo.outpoint.vout,
-                        contract_id_str,
-                        e
-                    );
-                }
+        match get_asset_balance(contracts_manager, bitcoin_wallet, &contract_id_str).await {
+            Ok(balance) => {
+                log::info!("    Total balance: {}", balance.total);
+                asset_balances.push(balance);
             }
-        }
-
-        // Only include assets with non-zero balance
-        if total_balance > 0 {
-            asset_balances.push(AssetBalance {
-                contract_id: contract_id_str,
-                ticker,
-                name,
-                total: total_balance,
-                precision,
-                utxo_balances,
-            });
+            Err(e) => {
+                log::warn!(
+                    "Failed to query balance for contract {}: {}",
+                    contract_id_str,
+                    e
+                );
+                // Continue with other contracts even if one fails
+            }
         }
     }
 
@@ -262,6 +225,32 @@ pub async fn get_asset_balance(
     // RGB tracks balances by Bitcoin UTXO identifiers
     let bdk_utxos: Vec<_> = bitcoin_wallet.inner().list_unspent().collect();
 
+    log::info!("================================================");
+    log::info!("📊 BALANCE QUERY for contract {}", contract_id_str);
+    log::info!("================================================");
+    log::info!("  BDK UTXOs:     {} to query", bdk_utxos.len());
+    log::info!("  Claimed UTXOs: {} to query", claimed_utxos.len());
+    log::info!("------------------------------------------------");
+
+    if !bdk_utxos.is_empty() {
+        log::info!("  BDK UTXOs (from list_unspent):");
+        for utxo in &bdk_utxos {
+            log::info!("    • {}:{}", utxo.outpoint.txid, utxo.outpoint.vout);
+        }
+    } else {
+        log::info!("  ⚠️  No BDK UTXOs found via list_unspent()");
+    }
+
+    if !claimed_utxos.is_empty() {
+        log::info!("  Claimed UTXOs (from claim storage):");
+        for (txid, vout) in &claimed_utxos {
+            log::info!("    • {}:{}", txid, vout);
+        }
+    } else {
+        log::info!("  ⚠️  No claimed UTXOs found in claim storage");
+    }
+    log::info!("================================================");
+
     let mut utxo_balances = Vec::new();
     let mut total_balance = 0u64;
 
@@ -269,10 +258,17 @@ pub async fn get_asset_balance(
     for utxo in &bdk_utxos {
         let seal = convert_outpoint_to_seal(&utxo.outpoint)?;
 
+        log::debug!(
+            "Querying BDK UTXO {}:{} for contract {}",
+            utxo.outpoint.txid,
+            utxo.outpoint.vout,
+            contract_id_str
+        );
+
         match contract.balance(&seal).await {
             Ok(amount) if amount > 0 => {
-                log::debug!(
-                    "UTXO {}:{} has balance: {}",
+                log::info!(
+                    "  ✅ BDK UTXO {}:{} has balance: {} (found via BDK list_unspent)",
                     utxo.outpoint.txid,
                     utxo.outpoint.vout,
                     amount
@@ -283,10 +279,17 @@ pub async fn get_asset_balance(
                 });
                 total_balance += amount;
             }
-            Ok(_) => {}
+            Ok(amount) => {
+                log::debug!(
+                    "  - UTXO {}:{} has zero balance ({})",
+                    utxo.outpoint.txid,
+                    utxo.outpoint.vout,
+                    amount
+                );
+            }
             Err(e) => {
                 log::debug!(
-                    "Balance query failed for UTXO {}:{}: {}",
+                    "  ✗ Balance query failed for UTXO {}:{}: {}",
                     utxo.outpoint.txid,
                     utxo.outpoint.vout,
                     e
@@ -298,6 +301,12 @@ pub async fn get_asset_balance(
     // PRODUCTION FIX: Also query RGB-specific claimed UTXOs
     // These UTXOs may have Tapret-modified addresses that BDK doesn't track,
     // so we maintain separate tracking in our claim storage.
+    log::debug!(
+        "Querying {} claimed RGB UTXOs for contract {}",
+        claimed_utxos.len(),
+        contract_id_str
+    );
+
     for (txid_str, vout) in claimed_utxos {
         // Skip if already queried via BDK
         let already_queried = bdk_utxos
@@ -305,6 +314,11 @@ pub async fn get_asset_balance(
             .any(|u| u.outpoint.txid.to_string() == txid_str && u.outpoint.vout == vout);
 
         if already_queried {
+            log::debug!(
+                "  Skipping claimed UTXO {}:{} (already queried via BDK)",
+                txid_str,
+                vout
+            );
             continue;
         }
 
@@ -322,10 +336,21 @@ pub async fn get_asset_balance(
         let outpoint = bdk_wallet::bitcoin::OutPoint::new(txid, vout);
         let seal = convert_outpoint_to_seal(&outpoint)?;
 
+        // DIAGNOSTIC: Show the exact seal_id that will be sent to F1r3node
+        let seal_id_for_f1r3node = f1r3fly_rgb::F1r3flyRgbContract::serialize_seal(&seal);
+
+        log::info!(
+            "🔍 Querying claimed RGB UTXO {}:{} for contract {}",
+            txid,
+            vout,
+            contract_id_str
+        );
+        log::info!("   Seal ID sent to F1r3node: {}", seal_id_for_f1r3node);
+
         match contract.balance(&seal).await {
             Ok(amount) if amount > 0 => {
-                log::debug!(
-                    "RGB UTXO {}:{} has balance: {} (from claim tracking)",
+                log::info!(
+                    "  ✅ CLAIMED UTXO {}:{} has balance: {} (found via claim storage fallback)",
                     txid,
                     vout,
                     amount
@@ -336,9 +361,21 @@ pub async fn get_asset_balance(
                 });
                 total_balance += amount;
             }
-            Ok(_) => {}
+            Ok(amount) => {
+                log::debug!(
+                    "  - RGB UTXO {}:{} has zero balance ({}) (from claim tracking)",
+                    txid,
+                    vout,
+                    amount
+                );
+            }
             Err(e) => {
-                log::debug!("Balance query failed for RGB UTXO {}:{}: {}", txid, vout, e);
+                log::debug!(
+                    "  ✗ Balance query failed for RGB UTXO {}:{}: {}",
+                    txid,
+                    vout,
+                    e
+                );
             }
         }
     }
@@ -635,7 +672,8 @@ fn convert_outpoint_to_seal(outpoint: &BdkOutPoint) -> Result<TxoSeal, BalanceEr
     use f1r3fly_rgb::Txid as RgbTxid;
 
     // Convert bitcoin::Txid to RGB Txid (bp::Txid)
-    // Explicitly get the [u8; 32] array from bitcoin::Txid
+    // Both store txid bytes in the same internal format (little-endian)
+    // We can directly copy the bytes without any conversion
     let txid_bytes: [u8; 32] = *outpoint.txid.as_ref();
     let rgb_txid = RgbTxid::from(txid_bytes);
 

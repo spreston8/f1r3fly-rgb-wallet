@@ -17,6 +17,10 @@ pub enum RgbCommandError {
     /// Config error
     #[error("Config error: {0}")]
     Config(#[from] crate::config::ConfigError),
+
+    /// IO error
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// Issue a new RGB asset
@@ -342,4 +346,67 @@ fn format_amount(amount: u64, precision: u8) -> String {
         .trim_end_matches('.')
         .to_string()
     }
+}
+
+/// Export genesis consignment for contract sharing
+///
+/// Allows a contract issuer to export the genesis consignment so that
+/// recipients can import the contract metadata before accepting transfers.
+///
+/// # Arguments
+///
+/// * `wallet_name` - Name of the wallet containing the contract
+/// * `contract_id` - Contract ID to export
+/// * `output_path` - Optional custom output path (defaults to wallet's consignments dir)
+/// * `password` - Wallet password
+/// * `overrides` - Config overrides from CLI/env
+///
+/// # Returns
+///
+/// Success if genesis consignment is exported
+///
+/// # Errors
+///
+/// Returns error if wallet not found, contract doesn't exist, or export fails
+pub async fn export_genesis(
+    wallet_name: String,
+    contract_id: String,
+    output_path: Option<String>,
+    password: String,
+    overrides: ConfigOverrides,
+) -> Result<(), RgbCommandError> {
+    // Load config
+    let config = load_config(None, overrides)?;
+
+    // Create manager and load wallet
+    let mut manager = WalletManager::new(config)?;
+    manager.load_wallet(&wallet_name, &password)?;
+
+    println!("📤 Exporting genesis consignment...");
+    println!("  Contract ID: {}", contract_id);
+    println!();
+
+    // Export genesis (uses existing manager.export_genesis method)
+    let response = manager.export_genesis(&contract_id).await?;
+
+    // If custom output path specified, copy the file
+    if let Some(custom_path) = &output_path {
+        std::fs::copy(&response.consignment_path, custom_path)?;
+        println!("✓ Genesis consignment exported!");
+        println!();
+        println!("  Source:      {}", response.consignment_path.display());
+        println!("  Copied to:   {}", custom_path);
+    } else {
+        println!("✓ Genesis consignment exported!");
+        println!();
+        println!("  Location:    {}", response.consignment_path.display());
+    }
+
+    println!();
+    println!("📋 Next Steps:");
+    println!("  1. Share this file with recipients who want to receive transfers");
+    println!("  2. Recipients should import using:");
+    println!("     accept-consignment --consignment-path <path>");
+
+    Ok(())
 }

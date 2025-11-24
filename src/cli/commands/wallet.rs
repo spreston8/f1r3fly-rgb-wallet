@@ -131,38 +131,44 @@ pub fn list(overrides: ConfigOverrides) -> Result<(), WalletCommandError> {
     Ok(())
 }
 
-/// Get F1r3fly public key for a wallet
+/// Get F1r3fly public key
 ///
-/// Reads the public key from encrypted keys file (public key itself is not encrypted).
+/// Returns the public key from the F1r3fly executor (master key).
+/// This is the key used for all RGB transfer and claim signatures.
 /// No password required since it's public information meant to be shared.
-pub fn get_f1r3fly_pubkey(
-    wallet_name: String,
-    overrides: ConfigOverrides,
-) -> Result<(), WalletCommandError> {
+pub fn get_f1r3fly_pubkey(overrides: ConfigOverrides) -> Result<(), WalletCommandError> {
     // Load config
     let config = load_config(None, overrides)?;
-    let custom_base = config.wallets_dir.as_deref();
 
-    // Build path to keys.json
-    let wallet_path = crate::storage::file_system::wallet_dir(&wallet_name, custom_base)?;
-    let keys_path = wallet_path.join("keys.json");
+    // IMPORTANT: Get the public key from the F1r3flyExecutor (using config master key)
+    // This is the ACTUAL key used for signing claims and transfers.
+    // The wallet-specific F1r3fly key stored in keys.json is reserved for future use.
+    //
+    // Create executor using the config's master key (same as what's used for actual operations)
+    use f1r3fly_rgb::F1r3flyExecutor;
+    use node_cli::connection_manager::{ConnectionConfig, F1r3flyConnectionManager};
 
-    // Read encrypted keys file
-    let keys_json = std::fs::read_to_string(&keys_path).map_err(|e| {
-        WalletCommandError::FileSystem(crate::storage::file_system::FileSystemError::Io(e))
-    })?;
+    let connection_config = ConnectionConfig::new(
+        config.f1r3node.host.clone(),
+        config.f1r3node.grpc_port,
+        config.f1r3node.http_port,
+        config.f1r3node.master_key.clone(),
+    );
 
-    // Parse JSON to get EncryptedWalletKeys
-    let encrypted_keys: crate::storage::models::EncryptedWalletKeys =
-        serde_json::from_str(&keys_json).map_err(|e| {
-            WalletCommandError::FileSystem(
-                crate::storage::file_system::FileSystemError::Serialization(e),
-            )
-        })?;
+    let connection = F1r3flyConnectionManager::new(connection_config);
+    let executor = F1r3flyExecutor::with_connection(connection);
+
+    // Get the public key from the executor (at derivation index 0, which is the default)
+    let pubkey = executor
+        .get_public_key()
+        .expect("Failed to get public key from executor");
+
+    // Use uncompressed format (matches invoice generation)
+    let pubkey_hex = hex::encode(pubkey.serialize_uncompressed());
 
     // Display public key (not encrypted, safe to show)
     println!("F1r3fly Public Key:");
-    println!("  {}", encrypted_keys.f1r3fly_public_key);
+    println!("  {}", pubkey_hex);
     println!();
     println!("💡 Share this public key with senders who want to transfer RGB assets to you.");
 

@@ -759,13 +759,16 @@ pub async fn attempt_claim(
         (utxo.outpoint.txid, utxo.outpoint.vout)
     };
 
-    // Step 2: Format real UTXO identifier (normalized, little-endian)
-    use bitcoin::hashes::Hash;
-    let txid_bytes = real_txid.to_byte_array();
-    let real_utxo = format!("{}:{}", hex::encode(txid_bytes), real_vout);
+    // Step 2: Format real UTXO identifier (display format, big-endian)
+    // Use to_string() to get the standard Bitcoin display format (big-endian hex)
+    // This must match the format used in F1r3node's contract and balance queries
+    let real_utxo = format!("{}:{}", real_txid.to_string(), real_vout);
 
-    log::debug!("  Found matching UTXO: {}", real_utxo);
-    log::debug!("  Will claim from: {}", claim.witness_id);
+    log::info!("🎯 CLAIM: Sending to F1r3node:");
+    log::info!("   Witness ID:  {}", claim.witness_id);
+    log::info!("   Real UTXO:   {}", real_utxo);
+    log::info!("   Actual TXID from storage: {:?}", claim.actual_txid);
+    log::info!("   Real TXID (parsed):       {}", real_txid);
 
     // Step 3: Generate claim signature
     // Sign message: (witness_id, real_utxo)
@@ -813,8 +816,57 @@ pub async fn attempt_claim(
         hex::encode(&result.state_hash)
     );
 
+    // Step 6: DIAGNOSTIC - Query both witness_id and real_utxo balances to verify claim
+    // This helps diagnose if the claim actually migrated the balance on F1r3node
+
+    // Query witness_id balance (should be 0 if claim succeeded)
+    let witness_balance = contract
+        .executor()
+        .query_state(
+            contract_id,
+            "balanceOf",
+            &[("address", StrictVal::from(claim.witness_id.as_str()))],
+        )
+        .await
+        .ok()
+        .and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|i| i as u64)))
+        .unwrap_or(0);
+
+    // Query real_utxo balance (should have the migrated tokens if claim succeeded)
+    let real_balance = contract
+        .executor()
+        .query_state(
+            contract_id,
+            "balanceOf",
+            &[("address", StrictVal::from(real_utxo.as_str()))],
+        )
+        .await
+        .ok()
+        .and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|i| i as u64)))
+        .unwrap_or(0);
+
+    log::info!(
+        "🔍 DIAGNOSTIC: Witness ID {} balance after claim: {}",
+        claim.witness_id,
+        witness_balance
+    );
+    log::info!(
+        "🔍 DIAGNOSTIC: Real UTXO {} balance after claim: {}",
+        real_utxo,
+        real_balance
+    );
+
+    if witness_balance > 0 && real_balance == 0 {
+        log::warn!("⚠️  CLAIM FAILED: Tokens still at witness_id! Claim may have been rejected by contract.");
+    } else if real_balance > 0 {
+        log::info!(
+            "✅ CLAIM VERIFIED: {} tokens migrated successfully",
+            real_balance
+        );
+    }
+
     Ok(ClaimResult {
-        migrated_balance: 0, // Cannot extract from result easily
+        migrated_balance: real_balance,
         from: claim.witness_id.clone(),
         to: real_utxo,
     })

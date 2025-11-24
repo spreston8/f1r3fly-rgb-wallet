@@ -1507,10 +1507,10 @@ impl WalletManager {
                 .get_all_claims(cid)
                 .map_err(ManagerError::Storage)
         } else {
-            // Get all pending claims across all contracts
+            // Get all claims across all contracts (any status)
             contracts
                 .claim_storage()
-                .get_pending_claims(None)
+                .get_all_claims_unfiltered()
                 .map_err(ManagerError::Storage)
         }
     }

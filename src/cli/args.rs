@@ -272,6 +272,21 @@ pub enum Commands {
         #[arg(short, long)]
         password: String,
     },
+
+    /// Export genesis consignment for contract sharing
+    ExportGenesis {
+        /// Contract ID to export
+        #[arg(short, long)]
+        contract_id: String,
+
+        /// Output file path (optional, defaults to wallet's consignments dir)
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Password to decrypt the wallet
+        #[arg(short, long)]
+        password: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]

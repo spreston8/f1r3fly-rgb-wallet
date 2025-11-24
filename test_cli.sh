@@ -6,7 +6,13 @@ set +e
 
 # Create temporary directory for testing
 TEMP_DIR=$(mktemp -d)
-WALLET_NAME="test1"
+
+# Generate unique wallet names to prevent F1r3node state pollution across test runs
+# This matches the integration test approach (env.unique_wallet_name()) which ensures
+# fresh contract state on F1r3node for each test run, avoiding cached/stale data issues.
+TIMESTAMP=$(date +%s)
+WALLET_NAME="test_alice_${TIMESTAMP}"
+BOB_WALLET_NAME="test_bob_${TIMESTAMP}"
 PASSWORD="testpass123"
 
 # Detect CI environment and configure accordingly
@@ -26,6 +32,7 @@ fi
 TESTS_PASSED=0
 TESTS_FAILED=0
 TEST_RESULTS=()
+EXIT_CODE=1  # Default to failure, will be set to 0 if all tests pass
 
 # Setup logging
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,6 +55,9 @@ if [ -f ".env" ]; then
 else
     echo "⚠ Warning: .env file not found (RGB tests may fail)"
 fi
+
+# Note: RUST_LOG will be set selectively for specific tests that need debug logging
+# Global debug logging interferes with output parsing in tests
 
 echo "======================================"
 echo "Testing f1r3fly-rgb-wallet CLI"
@@ -281,18 +291,25 @@ else
 fi
 echo ""
 
-# Test 5: Mine blocks to fund wallet  
+# Test 5: Fund wallet from mining wallet
 echo "======================================"
-echo "Test 5: Mine blocks to fund wallet"
+echo "Test 5: Fund wallet"
 echo "======================================"
 if [ "$REGTEST_RUNNING" = true ] && [ -n "$WALLET_ADDRESS" ]; then
-    echo "Mining 101 blocks to address: $WALLET_ADDRESS"
-    $BITCOIN_CLI generatetoaddress 101 "$WALLET_ADDRESS" > /dev/null 2>&1
-    echo "✓ Mined 101 blocks"
+    # Note: Mining blocks directly to wallet creates coinbase outputs with 0 value
+    # due to Bitcoin halvings in regtest. Instead, we fund from mining_wallet.
+    echo "Funding wallet with 0.01 BTC from mining wallet..."
+    $BITCOIN_CLI -rpcwallet=mining_wallet sendtoaddress "$WALLET_ADDRESS" 0.01 > /dev/null 2>&1
+    
+    # Mine blocks to confirm the transaction
+    echo "Mining 1 block to confirm..."
+    $BITCOIN_CLI generatetoaddress 1 "$WALLET_ADDRESS" > /dev/null 2>&1
     
     # Wait for Electrs to index
     echo "Waiting ${SLEEP_TIME} seconds for Electrs indexing..."
     sleep $SLEEP_TIME
+    
+    echo "✓ Wallet funded with 0.01 BTC"
 else
     echo "⚠ Skipping (regtest not running or no address)"
 fi
@@ -459,10 +476,10 @@ if [ "$REGTEST_RUNNING" = true ]; then
     assert_contains "$TABLE_OUTPUT" "Status"
     TEST8A_TABLE_STATUS=$?
     
-    # Validate we see some UTXOs (we should have ~104 from previous tests)
+    # Validate we see some UTXOs (we should have ~4 from Test 5 funding + Test 8)
     # Note: Status column shows "Available" (capitalized)
     UTXO_COUNT_TABLE=$(echo "$TABLE_OUTPUT" | grep -c "Available" || echo "0")
-    assert_greater_than "$UTXO_COUNT_TABLE" "50"
+    assert_greater_than "$UTXO_COUNT_TABLE" "2"
     TEST8A_TABLE_COUNT=$?
     
     echo "--- Compact Format (available-only) ---"
@@ -479,7 +496,7 @@ if [ "$REGTEST_RUNNING" = true ]; then
     
     # Validate compact format (should be outpoint with amount and status, one per line)
     COMPACT_LINES=$(echo "$COMPACT_OUTPUT" | grep -v "warning:" | grep -v "Finished" | grep -v "Running" | grep -c ":" || echo "0")
-    assert_greater_than "$COMPACT_LINES" "50"
+    assert_greater_than "$COMPACT_LINES" "2"
     TEST8A_COMPACT_COUNT=$?
     
     # Validate compact format structure (should have txid:vout pattern and "available")
@@ -507,7 +524,7 @@ if [ "$REGTEST_RUNNING" = true ]; then
     # Extract and validate UTXO count from JSON
     if [ $TEST8A_JSON_VALID -eq 0 ]; then
         JSON_UTXO_COUNT=$(echo "$JSON_ONLY" | jq -r '.total_utxos')
-        assert_greater_than "$JSON_UTXO_COUNT" "50"
+        assert_greater_than "$JSON_UTXO_COUNT" "2"
         TEST8A_JSON_COUNT=$?
         
         # Validate JSON has required fields
@@ -906,11 +923,10 @@ if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
     if [ -z "$CONTRACT_ID" ]; then
         echo "⚠ Skipping - Test 10 did not provide CONTRACT_ID"
     else
-        BOB_WALLET="test_bob"
-        echo "Creating Bob's wallet..."
+        echo "Creating Bob's wallet (${BOB_WALLET_NAME})..."
         BOB_CREATE=$(cargo run --bin f1r3fly-rgb-wallet -- \
             --data-dir "$TEMP_DIR" \
-            wallet create "$BOB_WALLET" \
+            wallet create "$BOB_WALLET_NAME" \
             --password "$PASSWORD" 2>&1)
         
         echo "$BOB_CREATE" | grep -v "warning:"
@@ -923,7 +939,7 @@ if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
         # Get Bob's address
         BOB_ADDR_OUTPUT=$(cargo run --bin f1r3fly-rgb-wallet -- \
             --data-dir "$TEMP_DIR" \
-            --wallet "$BOB_WALLET" \
+            --wallet "$BOB_WALLET_NAME" \
             get-addresses \
             --count 1 \
             --password "$PASSWORD" 2>&1)
@@ -938,17 +954,88 @@ if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
         # Sync Bob's wallet
         cargo run --bin f1r3fly-rgb-wallet -- \
             --data-dir "$TEMP_DIR" \
-            --wallet "$BOB_WALLET" \
+            --wallet "$BOB_WALLET_NAME" \
             sync --password "$PASSWORD" 2>&1 | grep -v "warning:" | head -3
         
         if [ $TEST13_SUCCESS -eq 0 ] && [ -n "$BOB_ADDRESS" ]; then
             assert_success "13" "Create Bob's wallet" "0"
+            echo "  Bob's wallet: $BOB_WALLET_NAME"
             echo "  Bob's address: $BOB_ADDRESS"
-            export BOB_WALLET
             export BOB_ADDRESS
         else
             assert_success "13" "Create Bob's wallet" "1"
             echo "  Error: Bob's wallet creation failed"
+        fi
+    fi
+else
+    echo "⚠ Skipping (F1r3node or regtest not running)"
+fi
+echo ""
+
+# Test 13a: Alice exports genesis consignment
+echo "======================================"
+echo "Test 13a: Alice exports genesis"
+echo "======================================"
+if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
+    if [ -z "$CONTRACT_ID" ]; then
+        echo "⚠ Skipping - CONTRACT_ID not available"
+    else
+        echo "Alice exporting genesis consignment..."
+        EXPORT_OUTPUT=$(cargo run --bin f1r3fly-rgb-wallet -- \
+            --data-dir "$TEMP_DIR" \
+            --wallet "$WALLET_NAME" \
+            export-genesis \
+            --contract-id "$CONTRACT_ID" \
+            --password "$PASSWORD" 2>&1)
+        
+        echo "$EXPORT_OUTPUT" | grep -v "warning:"
+        echo ""
+        
+        # Extract consignment path from output (look for "Location:" line)
+        GENESIS_CONSIGNMENT_PATH=$(echo "$EXPORT_OUTPUT" | grep "Location:" | awk '{print $2}')
+        
+        # Validate export
+        if [ -f "$GENESIS_CONSIGNMENT_PATH" ]; then
+            assert_success "13a" "Alice exports genesis" "0"
+            echo "  ✓ Genesis consignment: $GENESIS_CONSIGNMENT_PATH"
+            export GENESIS_CONSIGNMENT_PATH
+        else
+            assert_success "13a" "Alice exports genesis" "1"
+            echo "  ✗ Genesis consignment file not found"
+        fi
+    fi
+else
+    echo "⚠ Skipping (F1r3node or regtest not running)"
+fi
+echo ""
+
+# Test 13b: Bob imports contract genesis
+echo "======================================"
+echo "Test 13b: Bob imports genesis"
+echo "======================================"
+if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
+    if [ -z "$GENESIS_CONSIGNMENT_PATH" ] || [ -z "$BOB_WALLET_NAME" ]; then
+        echo "⚠ Skipping - Prerequisites not met"
+    else
+        echo "Bob importing contract genesis..."
+        IMPORT_OUTPUT=$(cargo run --bin f1r3fly-rgb-wallet -- \
+            --data-dir "$TEMP_DIR" \
+            --wallet "$BOB_WALLET_NAME" \
+            accept-consignment \
+            --consignment-path "$GENESIS_CONSIGNMENT_PATH" \
+            --password "$PASSWORD" 2>&1)
+        
+        echo "$IMPORT_OUTPUT" | grep -v "warning:"
+        echo ""
+        
+        # Validate import
+        assert_contains "$IMPORT_OUTPUT" "accepted successfully"
+        if [ $? -eq 0 ]; then
+            assert_success "13b" "Bob imports genesis" "0"
+            echo "  ✓ Bob now has contract: $CONTRACT_ID"
+        else
+            assert_success "13b" "Bob imports genesis" "1"
+            echo "  ✗ Bob failed to import contract"
         fi
     fi
 else
@@ -961,13 +1048,13 @@ echo "======================================"
 echo "Test 14: Generate RGB Invoice (Bob)"
 echo "======================================"
 if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
-    if [ -z "$CONTRACT_ID" ] || [ -z "$BOB_WALLET" ]; then
+    if [ -z "$CONTRACT_ID" ] || [ -z "$BOB_WALLET_NAME" ]; then
         echo "⚠ Skipping - Prerequisites not met"
     else
         echo "Bob generating invoice for 250 TEST tokens..."
         INVOICE_OUTPUT=$(cargo run --bin f1r3fly-rgb-wallet -- \
             --data-dir "$TEMP_DIR" \
-            --wallet "$BOB_WALLET" \
+            --wallet "$BOB_WALLET_NAME" \
             generate-invoice \
             --contract-id "$CONTRACT_ID" \
             --amount 250 \
@@ -990,6 +1077,17 @@ if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
             assert_success "14" "Generate invoice" "0"
             echo "  Invoice: ${INVOICE:0:50}..."
             export INVOICE
+            
+            # CRITICAL: Bob must sync after generating invoice
+            # After reveal_next_address() in invoice generation, Bob must sync
+            # so that BDK's in-memory spk_index tracks the new address for UTXO discovery.
+            # Without this sync, BDK won't discover UTXOs sent to the invoice address!
+            echo ""
+            echo "Syncing Bob's wallet after invoice generation..."
+            cargo run --bin f1r3fly-rgb-wallet -- \
+                --data-dir "$TEMP_DIR" \
+                --wallet "$BOB_WALLET_NAME" \
+                sync --password "$PASSWORD" 2>&1 | grep -v "warning:" | head -3
         else
             assert_success "14" "Generate invoice" "1"
             echo "  Error: Invoice generation failed"
@@ -1005,7 +1103,7 @@ echo "======================================"
 echo "Test 15: Send RGB Transfer (Alice → Bob)"
 echo "======================================"
 if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
-    if [ -z "$INVOICE" ] || [ -z "$BOB_WALLET" ]; then
+    if [ -z "$INVOICE" ] || [ -z "$BOB_WALLET_NAME" ]; then
         echo "⚠ Skipping - Prerequisites not met"
     else
         # Fund Alice's wallet with Bitcoin from mining wallet for transfer fee
@@ -1028,10 +1126,10 @@ if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
         echo "Getting Bob's F1r3fly public key..."
         BOB_PUBKEY_OUTPUT=$(cargo run --bin f1r3fly-rgb-wallet -- \
             --data-dir "$TEMP_DIR" \
-            --wallet "$BOB_WALLET" \
+            --wallet "$BOB_WALLET_NAME" \
             wallet get-f1r3fly-pubkey 2>&1)
         
-        BOB_PUBKEY=$(echo "$BOB_PUBKEY_OUTPUT" | grep -v "warning:" | grep -v "F1r3fly Public Key:" | grep -v "💡" | grep -v "Finished" | grep -v "Running" | grep -v "Compiling" | grep -o '[a-f0-9]\{66\}')
+        BOB_PUBKEY=$(echo "$BOB_PUBKEY_OUTPUT" | grep -v "warning:" | grep -v "F1r3fly Public Key:" | grep -v "💡" | grep -v "Finished" | grep -v "Running" | grep -v "Compiling" | grep -o '[a-f0-9]\{130\}')
         
         if [ -z "$BOB_PUBKEY" ]; then
             echo "✗ ERROR: Could not extract Bob's F1r3fly public key"
@@ -1073,6 +1171,47 @@ if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
                 echo "  Consignment: $CONSIGNMENT_PATH"
                 export TRANSFER_TXID
                 export CONSIGNMENT_PATH
+                
+                # CRITICAL: Mine blocks to confirm transfer BEFORE Bob accepts
+                # This matches integration test Steps 4 and 5.5
+                echo ""
+                echo "Mining 1 block to confirm transfer..."
+                $BITCOIN_CLI generatetoaddress 1 "$WALLET_ADDRESS" > /dev/null 2>&1
+                echo "Waiting ${SLEEP_TIME} seconds for Esplora indexing..."
+                sleep $SLEEP_TIME
+                
+                # Step 5.5 from integration test: Mine another block for additional confirmation
+                echo "Mining 1 more block for confirmation (matches integration test)..."
+                $BITCOIN_CLI generatetoaddress 1 "$WALLET_ADDRESS" > /dev/null 2>&1
+                sleep $SLEEP_TIME
+                
+                # Step 5.5: Sync Alice's wallet after confirmation
+                # This matches integration test and ensures transfer state is finalized
+                echo "Syncing Alice's wallet after confirmation..."
+                cargo run --bin f1r3fly-rgb-wallet -- \
+                    --data-dir "$TEMP_DIR" \
+                    --wallet "$WALLET_NAME" \
+                    sync --password "$PASSWORD" 2>&1 | grep -v "warning:" | head -3
+                echo ""
+                
+                # Step 6: Verify Alice's balance BEFORE Bob accepts
+                # This ensures the transfer actually succeeded on F1r3node
+                echo "Verifying Alice's balance after transfer..."
+                ALICE_BALANCE_OUTPUT=$(cargo run --bin f1r3fly-rgb-wallet -- \
+                    --data-dir "$TEMP_DIR" \
+                    --wallet "$WALLET_NAME" \
+                    rgb-balance \
+                    --password "$PASSWORD" 2>&1)
+                
+                ALICE_BALANCE=$(echo "$ALICE_BALANCE_OUTPUT" | grep -E "(Total:|Balance:)" | grep -o '[0-9]*' | head -1)
+                
+                if [ "$ALICE_BALANCE" = "750" ]; then
+                    echo "  ✓ Alice's balance: 750 TEST (transfer succeeded)"
+                else
+                    echo "  ✗ WARNING: Alice's balance is $ALICE_BALANCE (expected 750)"
+                    echo "  Transfer may not have completed on F1r3node"
+                fi
+                echo ""
             else
                 assert_success "15" "Send RGB transfer" "1"
                 echo "  Error: Transfer validation failed"
@@ -1144,56 +1283,129 @@ if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
     if [ -z "$CONSIGNMENT_PATH" ] || [ -z "$TRANSFER_TXID" ]; then
         echo "⚠ Skipping - Test 15 did not complete successfully"
     else
-        echo "Bob accepting consignment..."
-        ACCEPT_OUTPUT=$(cargo run --bin f1r3fly-rgb-wallet -- \
+        # CRITICAL: Bob must sync BEFORE accepting the consignment
+        # Bob needs to sync his wallet so his BDK wallet can discover the new UTXO
+        # that Alice sent him. This UTXO will be used during the auto-claim process
+        # when accepting the consignment.
+        echo "Syncing Bob's wallet to discover received UTXO..."
+        cargo run --bin f1r3fly-rgb-wallet -- \
             --data-dir "$TEMP_DIR" \
-            --wallet "$BOB_WALLET" \
+            --wallet "$BOB_WALLET_NAME" \
+            sync --password "$PASSWORD" 2>&1 | grep -v "warning:" | head -3
+        echo ""
+        
+        echo "Bob accepting transfer consignment..."
+        ACCEPT_OUTPUT=$(RUST_LOG=debug cargo run --bin f1r3fly-rgb-wallet -- \
+            --data-dir "$TEMP_DIR" \
+            --wallet "$BOB_WALLET_NAME" \
             accept-consignment \
             --consignment-path "$CONSIGNMENT_PATH" \
             --password "$PASSWORD" 2>&1)
         
-        echo "$ACCEPT_OUTPUT" | grep -v "warning:"
+        # Show non-debug output first
+        echo "$ACCEPT_OUTPUT" | grep -v "warning:" | grep -v "DEBUG"
+        echo ""
+        
+        # Show debug logs related to claims
+        echo "--- Debug: Claim Processing ---"
+        echo "$ACCEPT_OUTPUT" | grep -E "DEBUG.*claim|DEBUG.*witness|DEBUG.*UTXO|DEBUG.*actual" | head -20
         echo ""
         
         # Validate acceptance
         assert_contains "$ACCEPT_OUTPUT" "accepted successfully"
         TEST17_SUCCESS=$?
         
-        # Mine blocks to confirm
-        echo "Mining 1 block to confirm..."
-        $BITCOIN_CLI generatetoaddress 1 "$WALLET_ADDRESS" > /dev/null 2>&1
-        sleep $SLEEP_TIME
-        
-        # Bob syncs
-        echo "Bob syncing wallet..."
+        # CRITICAL: Bob syncs AFTER accepting to finalize claim
+        # After accepting the consignment (which stores the witness mapping),
+        # Bob needs to sync again. This triggers retry_pending_claims which will
+        # find the stored witness mapping and execute the claim to migrate the
+        # balance from the witness ID to Bob's real UTXO.
+        # This matches integration test Step 8.5
+        echo "Syncing Bob's wallet after accepting consignment..."
         cargo run --bin f1r3fly-rgb-wallet -- \
             --data-dir "$TEMP_DIR" \
-            --wallet "$BOB_WALLET" \
+            --wallet "$BOB_WALLET_NAME" \
             sync --password "$PASSWORD" 2>&1 | grep -v "warning:" | head -3
-        
         echo ""
         
-        # Check Bob's balance
-        echo "Checking Bob's balance..."
-        BOB_BALANCE_OUTPUT=$(cargo run --bin f1r3fly-rgb-wallet -- \
+        # Check Bob's claim status
+        echo "Checking Bob's claim status..."
+        BOB_CLAIMS=$(RUST_LOG=debug cargo run --bin f1r3fly-rgb-wallet -- \
             --data-dir "$TEMP_DIR" \
-            --wallet "$BOB_WALLET" \
-            rgb-balance \
-            --password "$PASSWORD" 2>&1)
+            --wallet "$BOB_WALLET_NAME" \
+            list-claims --format json --password "$PASSWORD" 2>&1)
         
-        echo "$BOB_BALANCE_OUTPUT" | grep -v "warning:"
+        # Show debug logs for claim status
+        echo "$BOB_CLAIMS" | grep -E "(DEBUG|WARN|ERROR|claim)" | head -20
+        
+        # Extract just JSON
+        BOB_CLAIMS_JSON=$(echo "$BOB_CLAIMS" | grep -v "warning:" | grep -v "DEBUG" | grep -v "Finished" | grep -v "Running")
+        echo "$BOB_CLAIMS_JSON" | jq '.' 2>/dev/null || echo "$BOB_CLAIMS_JSON"
         echo ""
         
-        # Extract Bob's balance
-        BOB_BALANCE=$(echo "$BOB_BALANCE_OUTPUT" | grep -E "(Total:|Balance:)" | grep -o '[0-9]*' | head -1)
+        # Retry balance check with syncs (like Rust integration tests)
+        echo "Verifying Bob's balance (with retries)..."
+        MAX_ATTEMPTS=5
+        BOB_BALANCE=""
+        
+        for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            echo "  Attempt $attempt/$MAX_ATTEMPTS..."
+            
+            # Sync wallet (show debug logs on first attempt)
+            if [ $attempt -eq 1 ]; then
+                SYNC_OUTPUT=$(RUST_LOG=debug cargo run --bin f1r3fly-rgb-wallet -- \
+                    --data-dir "$TEMP_DIR" \
+                    --wallet "$BOB_WALLET_NAME" \
+                    sync --password "$PASSWORD" 2>&1)
+                echo "$SYNC_OUTPUT" | grep -E "(DEBUG|claim|attempt)" | head -10
+            else
+                cargo run --bin f1r3fly-rgb-wallet -- \
+                    --data-dir "$TEMP_DIR" \
+                    --wallet "$BOB_WALLET_NAME" \
+                    sync --password "$PASSWORD" 2>&1 | grep -v "warning:" > /dev/null
+            fi
+            
+            # Check balance (with INFO logging on first attempt)
+            if [ $attempt -eq 1 ]; then
+                BOB_BALANCE_OUTPUT=$(RUST_LOG=info cargo run --bin f1r3fly-rgb-wallet -- \
+                    --data-dir "$TEMP_DIR" \
+                    --wallet "$BOB_WALLET_NAME" \
+                    rgb-balance \
+                    --password "$PASSWORD" 2>&1)
+                
+                # Show all balance query logs on first attempt
+                echo "--- Balance Query Debug (Attempt 1) ---"
+                echo "$BOB_BALANCE_OUTPUT" | grep -E "(BALANCE QUERY|Claimed UTXOs|get_claimed_utxos|Querying|seal_id)" || true
+                echo "---------------------------------------"
+            else
+                BOB_BALANCE_OUTPUT=$(cargo run --bin f1r3fly-rgb-wallet -- \
+                    --data-dir "$TEMP_DIR" \
+                    --wallet "$BOB_WALLET_NAME" \
+                    rgb-balance \
+                    --password "$PASSWORD" 2>&1)
+            fi
+            
+            BOB_BALANCE=$(echo "$BOB_BALANCE_OUTPUT" | grep -E "(Total:|Balance:)" | grep -o '[0-9]*' | head -1)
+            
+            if [ "$BOB_BALANCE" = "250" ]; then
+                echo "  ✓ Balance confirmed: 250 TEST"
+                break
+            fi
+            
+            if [ $attempt -lt $MAX_ATTEMPTS ]; then
+                echo "    Balance: $BOB_BALANCE (expected 250), retrying..."
+                sleep 2
+            fi
+        done
         
         # Validate Bob received 250 tokens
         if [ "$BOB_BALANCE" = "250" ]; then
             TEST17_BALANCE_OK=0
         else
-            echo "✗ ERROR: Expected Bob's balance to be 250, got $BOB_BALANCE"
+            echo "✗ ERROR: Expected Bob's balance to be 250, got $BOB_BALANCE after $MAX_ATTEMPTS attempts"
             TEST17_BALANCE_OK=1
         fi
+        echo ""
         
         # Check Alice's balance (should be 750)
         echo "Checking Alice's balance..."
@@ -1264,17 +1476,24 @@ fi
 echo ""
 echo "RGB Asset Tests:"
 if [ "$F1R3NODE_RUNNING" = true ] && [ "$REGTEST_RUNNING" = true ]; then
-    echo "  ✓ RGB asset issuance (Tests 10-12)"
+    echo "  ✓ RGB asset issuance (Test 10)"
+    echo "  ✓ Asset listing & balance (Tests 11-12)"
     echo "  ✓ Multi-wallet setup (Test 13)"
+    echo "  ✓ Genesis export/import (Tests 13a-13b)"
     echo "  ✓ Invoice generation (Test 14)"
-    echo "  ✓ End-to-end transfer (Tests 15-17)"
-    echo "  ✓ Claim verification (Test 16)"
+    echo "  ✓ Transfer execution (Test 15)"
+    echo "  ✓ Claim tracking (Test 16)"
+    echo "  ✓ Transfer verification (Test 17)"
     echo ""
-    echo "  All RGB transfer commands validated:"
-    echo "    - wallet get-f1r3fly-pubkey (for pubkey sharing)"
-    echo "    - send-transfer (Alice → Bob)"
-    echo "    - accept-consignment (Bob receives)"
-    echo "    - list-claims (claim status tracking)"
+    echo "  Complete RGB transfer flow validated:"
+    echo "    - issue-asset (Alice creates contract)"
+    echo "    - export-genesis (Alice exports for sharing)"
+    echo "    - accept-consignment (Bob imports genesis)"
+    echo "    - wallet get-f1r3fly-pubkey (Bob shares pubkey)"
+    echo "    - generate-invoice (Bob creates invoice)"
+    echo "    - send-transfer (Alice sends to Bob)"
+    echo "    - accept-consignment (Bob receives transfer)"
+    echo "    - list-claims (track claim status)"
 else
     echo "  ⚠ RGB tests SKIPPED"
     if [ "$F1R3NODE_RUNNING" = false ]; then

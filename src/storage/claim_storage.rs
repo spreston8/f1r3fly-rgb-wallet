@@ -384,6 +384,18 @@ impl ClaimStorage {
         self.query_database(Some(contract_id), None)
     }
 
+    /// Get all claims across all contracts (any status)
+    ///
+    /// Returns all claims from database regardless of contract or status.
+    /// Useful for listing all claims when no contract filter is specified.
+    ///
+    /// # Returns
+    ///
+    /// All claims (any status, any contract)
+    pub fn get_all_claims_unfiltered(&self) -> Result<Vec<PendingClaim>, StorageError> {
+        self.query_database(None, None)
+    }
+
     /// Get all successfully claimed UTXOs for a contract
     ///
     /// Returns actual txid:vout pairs for all claimed RGB transfers.
@@ -400,12 +412,33 @@ impl ClaimStorage {
     pub fn get_claimed_utxos(&self, contract_id: &str) -> Result<Vec<(String, u32)>, StorageError> {
         let claimed = self.query_database(Some(contract_id), Some(ClaimStatus::Claimed))?;
 
+        log::info!(
+            "📊 get_claimed_utxos for contract {}: {} claimed records",
+            contract_id,
+            claimed.len()
+        );
+
         let mut utxos = Vec::new();
-        for claim in claimed {
-            if let (Some(txid), Some(vout)) = (claim.actual_txid, claim.actual_vout) {
-                utxos.push((txid, vout));
+        for claim in &claimed {
+            if let (Some(txid), Some(vout)) = (&claim.actual_txid, claim.actual_vout) {
+                log::info!(
+                    "  ✅ Claimed UTXO from storage: {}:{} (witness_id: {}, status: {:?})",
+                    txid,
+                    vout,
+                    claim.witness_id,
+                    claim.status
+                );
+                utxos.push((txid.clone(), vout));
+            } else {
+                log::warn!(
+                    "  ⚠️  Claim record missing actual_txid/vout: witness_id={}, status={:?}",
+                    claim.witness_id,
+                    claim.status
+                );
             }
         }
+
+        log::info!("  Total claimed UTXOs to return: {}", utxos.len());
 
         Ok(utxos)
     }

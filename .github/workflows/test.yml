@@ -41,6 +41,9 @@ jobs:
       - name: Run storage tests
         run: cargo test --test storage_test -- --nocapture 2>&1 | tee test-storage-output.log || (cat test-storage-output.log && exit 1)
       
+      - name: Run byte order tests
+        run: cargo test --test byte_order_test -- --nocapture 2>&1 | tee test-byte-order-output.log || (cat test-byte-order-output.log && exit 1)
+      
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -58,6 +61,7 @@ jobs:
           path: |
             test-keys-output.log
             test-storage-output.log
+            test-byte-order-output.log
             target/debug/deps/*.log
           retention-days: 7
 
@@ -440,6 +444,17 @@ jobs:
           chmod +x test_cli.sh
           ./test_cli.sh 2>&1 | tee test-cli-output.log || (cat test-cli-output.log && exit 1)
       
+      - name: Run CLI integration tests
+        env:
+          CI: true
+          FIREFLY_PRIVATE_KEY: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+          FIREFLY_HOST: localhost
+          FIREFLY_GRPC_PORT: 40401
+          FIREFLY_HTTP_PORT: 40403
+          BITCOIN_DATADIR: /tmp/bitcoin-ci
+        run: |
+          cargo test --test cli_integration_test -- --ignored --test-threads=1 --nocapture 2>&1 | tee test-cli-integration-output.log || (cat test-cli-integration-output.log && exit 1)
+      
       - name: Upload CLI test logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -467,6 +482,7 @@ jobs:
           name: cli-test-failed-logs
           path: |
             test-cli-output.log
+            test-cli-integration-output.log
             logs/test_cli_*.log
             ci-logs-cli/
           retention-days: 7

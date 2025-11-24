@@ -12,6 +12,9 @@ fn main() {
     // Load .env file if present (for FIREFLY_PRIVATE_KEY and other config)
     dotenv::dotenv().ok();
 
+    // Initialize logger (respects RUST_LOG environment variable)
+    env_logger::init();
+
     let cli = Cli::parse();
 
     // Parse network string to NetworkType
@@ -57,13 +60,9 @@ fn main() {
 
             WalletAction::List => commands::wallet::list(overrides).map_err(Into::into),
 
-            WalletAction::GetF1r3flyPubkey => match cli.wallet.as_deref() {
-                Some(wallet_name) => {
-                    commands::wallet::get_f1r3fly_pubkey(wallet_name.to_string(), overrides)
-                        .map_err(Into::into)
-                }
-                None => Err("Wallet name required (use --wallet <name>)".into()),
-            },
+            WalletAction::GetF1r3flyPubkey => {
+                commands::wallet::get_f1r3fly_pubkey(overrides).map_err(Into::into)
+            }
         },
 
         Commands::Sync { password } => match tokio::runtime::Runtime::new() {
@@ -275,6 +274,26 @@ fn main() {
                 ))
                 .map_err(Into::into),
             Err(e) => Err(format!("Failed to create async runtime: {}", e).into()),
+        },
+
+        Commands::ExportGenesis {
+            contract_id,
+            output,
+            password,
+        } => match cli.wallet.as_deref() {
+            Some(wallet_name) => match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt
+                    .block_on(commands::rgb::export_genesis(
+                        wallet_name.to_string(),
+                        contract_id,
+                        output,
+                        password,
+                        overrides,
+                    ))
+                    .map_err(Into::into),
+                Err(e) => Err(format!("Failed to create async runtime: {}", e).into()),
+            },
+            None => Err("Wallet name required (use --wallet <name>)".into()),
         },
     };
 

@@ -170,7 +170,8 @@ pub fn derive_f1r3fly_key(mnemonic: &bip39::Mnemonic) -> Result<(SecretKey, Stri
     // Derive public key
     let secp_ctx = secp256k1::Secp256k1::new();
     let public_key = PublicKey::from_secret_key(&secp_ctx, &secret_key);
-    let public_key_hex = hex::encode(public_key.serialize());
+    // Use uncompressed format to match invoice generation and F1r3node expectations
+    let public_key_hex = hex::encode(public_key.serialize_uncompressed());
 
     Ok((secret_key, public_key_hex))
 }

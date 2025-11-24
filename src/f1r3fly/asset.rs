@@ -238,8 +238,9 @@ pub async fn issue_asset(
         request.genesis_utxo
     );
 
-    // Parse and normalize the genesis UTXO format to internal Bitcoin representation
+    // Validate and use genesis UTXO in standard Bitcoin display format
     // RGB tracks balances by actual Bitcoin UTXO identifiers (txid:vout)
+    // Use the display format directly (big-endian hex) to match serialize_seal() output
     let normalized_genesis_seal = {
         let parts: Vec<&str> = request.genesis_utxo.split(':').collect();
         if parts.len() != 2 {
@@ -252,7 +253,7 @@ pub async fn issue_asset(
         let txid_display = parts[0];
         let vout = parts[1];
 
-        // Decode hex (display format is big-endian)
+        // Validate txid hex format
         let txid_bytes = hex::decode(txid_display)
             .map_err(|e| AssetError::DeploymentFailed(format!("Invalid txid hex: {}", e)))?;
 
@@ -263,13 +264,9 @@ pub async fn issue_asset(
             )));
         }
 
-        // Bitcoin internally uses little-endian byte order for txids
-        // Reverse the bytes to convert from display format to internal format
-        let mut txid_internal = txid_bytes;
-        txid_internal.reverse();
-
-        // Format as internal_txid:vout (this matches serialize_seal output)
-        format!("{}:{}", hex::encode(txid_internal), vout)
+        // Use the display format directly (big-endian hex)
+        // This matches the format returned by serialize_seal() after our byte order fix
+        format!("{}:{}", txid_display, vout)
     };
 
     log::info!(
