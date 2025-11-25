@@ -146,29 +146,29 @@ fn test_f1r3fly_key_derivation_produces_valid_secp256k1_keypair() {
         "Secret key should be 32 bytes (256 bits)"
     );
 
-    // Verify public key hex is valid format
+    // Verify public key hex is valid format (uncompressed for F1r3node compatibility)
     assert_eq!(
         public_key_hex.len(),
-        66,
-        "Compressed public key should be 66 hex characters (33 bytes)"
+        130,
+        "Uncompressed public key should be 130 hex characters (65 bytes)"
     );
     assert!(
-        public_key_hex.starts_with("02") || public_key_hex.starts_with("03"),
-        "Compressed public key should start with 02 or 03"
+        public_key_hex.starts_with("04"),
+        "Uncompressed public key should start with 04"
     );
 
     // Verify public key can be decoded
     let pubkey_bytes = hex::decode(&public_key_hex).expect("Public key should be valid hex");
     assert_eq!(
         pubkey_bytes.len(),
-        33,
-        "Compressed public key should be 33 bytes"
+        65,
+        "Uncompressed public key should be 65 bytes (1 prefix + 32 X + 32 Y)"
     );
 
-    // Verify public key matches secret key
+    // Verify public key matches secret key (using uncompressed format)
     let secp = secp256k1::Secp256k1::new();
     let derived_pubkey = secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
-    let derived_pubkey_hex = hex::encode(derived_pubkey.serialize());
+    let derived_pubkey_hex = hex::encode(derived_pubkey.serialize_uncompressed());
     assert_eq!(
         public_key_hex, derived_pubkey_hex,
         "Public key should match secret key"
