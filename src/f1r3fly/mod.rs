@@ -35,7 +35,7 @@ pub use consignment::{
     ConsignmentError, ExportGenesisResponse,
 };
 
-pub use transfer::{send_transfer, TransferError, TransferResponse};
+pub use transfer::{send_transfer, AnchorMethod, TransferError, TransferResponse};
 
 // Re-export core library types for convenience
 pub use f1r3fly_rgb::{GeneratedInvoice, ParsedInvoice, RgbBeneficiary, RgbInvoice};

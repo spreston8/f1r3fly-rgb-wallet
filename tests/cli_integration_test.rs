@@ -212,7 +212,6 @@ fn parse_available_utxo(output: &str) -> Option<String> {
 }
 
 #[test]
-#[ignore] // Run with: cargo test --test cli_integration_test -- --ignored --nocapture
 fn test_cli_complete_transfer_flow() {
     // Check prerequisites
     let f1r3node_running = reqwest::blocking::get("http://localhost:40403/api/status").is_ok();

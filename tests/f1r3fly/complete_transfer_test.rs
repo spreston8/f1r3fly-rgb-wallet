@@ -89,7 +89,7 @@ async fn test_complete_transfer_alice_to_bob() {
     let fee_rate = f1r3fly_rgb_wallet::bitcoin::utxo::FeeRateConfig::medium_priority();
 
     let transfer_response = alice
-        .send_transfer(&invoice_string, recipient_pubkey, &fee_rate)
+        .send_transfer(&invoice_string, recipient_pubkey, &fee_rate, None)
         .await
         .expect("Failed to send transfer");
 

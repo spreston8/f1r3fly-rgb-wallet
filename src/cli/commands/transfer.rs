@@ -57,9 +57,9 @@ pub async fn send_transfer(
     );
     println!();
 
-    // Send transfer
+    // Send transfer (defaults to Tapret)
     let response = manager
-        .send_transfer(&invoice, recipient_pubkey, &fee_rate_config)
+        .send_transfer(&invoice, recipient_pubkey, &fee_rate_config, None)
         .await?;
 
     println!("✓ Transfer sent successfully!");

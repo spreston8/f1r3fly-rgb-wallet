@@ -216,7 +216,7 @@ async fn test_prevent_double_spend() {
     let fee_rate = f1r3fly_rgb_wallet::bitcoin::utxo::FeeRateConfig::medium_priority();
 
     let transfer1 = alice
-        .send_transfer(&bob_invoice_string, bob_pubkey, &fee_rate)
+        .send_transfer(&bob_invoice_string, bob_pubkey, &fee_rate, None)
         .await
         .expect("Failed to send first transfer");
 
@@ -246,7 +246,7 @@ async fn test_prevent_double_spend() {
     // Alice tries to send 6,000 to Carol but only has 5,000 left
     // This should FAIL due to insufficient balance
     let result = alice
-        .send_transfer(&carol_invoice_string, carol_pubkey, &fee_rate)
+        .send_transfer(&carol_invoice_string, carol_pubkey, &fee_rate, None)
         .await;
 
     assert!(

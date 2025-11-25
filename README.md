@@ -17,6 +17,7 @@ cargo test -- --test-threads=1
 # Keys and storage tests (no prerequisites, can run in parallel)
 cargo test --test keys_test
 cargo test --test storage_test
+cargo test --test byte_order_test
 
 # Bitcoin integration tests (requires regtest, must run sequentially)
 cargo test --test bitcoin_integration_tests -- --test-threads=1
@@ -26,6 +27,12 @@ cargo test --test f1r3fly_integration_tests -- --test-threads=1
 
 # List UTXOs integration tests (requires regtest + F1r3node, must run sequentially)
 cargo test --test list_utxos_integration_test -- --test-threads=1 test_bitcoin_layer_list_utxos test_rgb_layer_seal_info test_manager_orchestration_with_filters test_multiple_rgb_assets test_data_structures_and_edge_cases
+
+# CLI integration test (requires regtest + F1r3node, must run sequentially)
+cargo test --test cli_integration_test -- --test-threads=1
+
+# CLI bash script tests (requires regtest + F1r3node)
+./test_cli.sh
 ```
 
 ## CLI Usage

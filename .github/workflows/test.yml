@@ -453,7 +453,7 @@ jobs:
           FIREFLY_HTTP_PORT: 40403
           BITCOIN_DATADIR: /tmp/bitcoin-ci
         run: |
-          cargo test --test cli_integration_test -- --ignored --test-threads=1 --nocapture 2>&1 | tee test-cli-integration-output.log || (cat test-cli-integration-output.log && exit 1)
+          cargo test --test cli_integration_test -- --test-threads=1 --nocapture 2>&1 | tee test-cli-integration-output.log || (cat test-cli-integration-output.log && exit 1)
       
       - name: Upload CLI test logs
         if: always()

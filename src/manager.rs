@@ -1256,6 +1256,7 @@ impl WalletManager {
         invoice_str: &str,
         recipient_pubkey_hex: String,
         fee_rate: &FeeRateConfig,
+        anchor_method: Option<crate::f1r3fly::AnchorMethod>,
     ) -> Result<crate::f1r3fly::TransferResponse, ManagerError> {
         let bitcoin_wallet = self
             .bitcoin_wallet
@@ -1315,6 +1316,7 @@ impl WalletManager {
             fee_rate,
             consignments_dir,
             &self.rgb_occupied,
+            anchor_method,
         )
         .await
         .map_err(|e| {

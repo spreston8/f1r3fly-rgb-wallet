@@ -171,7 +171,7 @@ async fn test_multi_party_transfer_chain() {
         .expect("Failed to sync Bob after invoice generation");
 
     let transfer1 = alice
-        .send_transfer(&bob_invoice1_string, bob_pubkey1, &fee_rate)
+        .send_transfer(&bob_invoice1_string, bob_pubkey1, &fee_rate, None)
         .await
         .expect("Failed to send transfer 1");
 
@@ -223,7 +223,7 @@ async fn test_multi_party_transfer_chain() {
         .expect("Failed to sync Carol after invoice generation");
 
     let transfer2 = alice
-        .send_transfer(&carol_invoice1_string, carol_pubkey1, &fee_rate)
+        .send_transfer(&carol_invoice1_string, carol_pubkey1, &fee_rate, None)
         .await
         .expect("Failed to send transfer 2");
 
@@ -490,6 +490,7 @@ async fn test_transfer_chain_with_explicit_sync() {
             &bob_invoice_data.invoice_string,
             bob_invoice_data.recipient_pubkey_hex.clone(),
             &fee_rate,
+            None,
         )
         .await
         .expect("Failed to send transfer");

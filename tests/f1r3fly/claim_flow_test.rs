@@ -95,6 +95,7 @@ async fn test_claim_before_confirmation() {
             &invoice_with_pubkey.invoice_string,
             invoice_with_pubkey.recipient_pubkey_hex,
             &fee_rate,
+            None,
         )
         .await
         .expect("Failed to send transfer");

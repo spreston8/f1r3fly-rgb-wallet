@@ -25,6 +25,23 @@ use crate::f1r3fly::F1r3flyContractsManager;
 use bdk_wallet::bitcoin::OutPoint;
 use std::collections::HashSet;
 
+/// RGB anchoring method for Bitcoin transactions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnchorMethod {
+    /// Tapret commitment (default, privacy-preserving)
+    /// Uses Taproot to hide RGB commitment in script tree
+    Tapret,
+    /// OP_RETURN commitment (for Lightning compatibility)
+    /// Explicit data field, compatible with LDK's RGB integration
+    OpReturn,
+}
+
+impl Default for AnchorMethod {
+    fn default() -> Self {
+        Self::Tapret // Keep Tapret as default for on-chain transfers
+    }
+}
+
 /// Error type for transfer operations
 #[derive(Debug, thiserror::Error)]
 pub enum TransferError {
@@ -75,6 +92,10 @@ pub enum TransferError {
     /// Tapret error
     #[error("Tapret error: {0}")]
     Tapret(#[from] f1r3fly_rgb::TapretError),
+
+    /// OP_RETURN error
+    #[error("OP_RETURN error: {0}")]
+    OpReturn(#[from] f1r3fly_rgb::OpReturnError),
 
     /// Invalid seal
     #[error("Invalid seal: {0}")]
@@ -129,6 +150,7 @@ pub struct TransferResponse {
 /// * `fee_rate` - Bitcoin transaction fee rate
 /// * `consignments_dir` - Directory to save consignment files
 /// * `rgb_occupied` - Set of RGB-occupied UTXOs to protect from spending
+/// * `anchor_method` - Optional anchoring method (defaults to Tapret if None)
 ///
 /// # Returns
 ///
@@ -151,7 +173,10 @@ pub async fn send_transfer(
     fee_rate: &FeeRateConfig,
     consignments_dir: PathBuf,
     rgb_occupied: &HashSet<OutPoint>,
+    anchor_method: Option<AnchorMethod>,
 ) -> Result<TransferResponse, TransferError> {
+    // Use Tapret as default if not specified (backward compatible)
+    let anchor_method = anchor_method.unwrap_or_default();
     log::info!("🚀 Starting RGB transfer");
     log::debug!("  Invoice: {}", invoice_str);
 
@@ -456,60 +481,120 @@ pub async fn send_transfer(
     log::debug!("  Outputs: {}", psbt.unsigned_tx.output.len());
 
     // ========================================================================
-    // Step 5: Embed Tapret Commitment in PSBT
+    // Step 5: Embed State Commitment in Transaction
     // ========================================================================
-    log::info!("🔒 Step 5: Embedding Tapret commitment in PSBT...");
+    log::info!(
+        "🔒 Step 5: Embedding {} commitment...",
+        match anchor_method {
+            AnchorMethod::Tapret => "Tapret",
+            AnchorMethod::OpReturn => "OP_RETURN",
+        }
+    );
 
-    // Convert BDK PSBT to BP PSBT for Tapret embedding
-    let bdk_psbt_bytes = psbt.serialize();
-    let mut bp_psbt = BpPsbt::deserialize(&bdk_psbt_bytes).map_err(|e| {
-        TransferError::Tapret(f1r3fly_rgb::TapretError::CommitmentFailed(format!(
-            "PSBT conversion failed: {:?}",
-            e
-        )))
-    })?;
+    let anchor = match anchor_method {
+        AnchorMethod::Tapret => {
+            // ═══════════════════════════════════════════════════════════
+            // Tapret Path (Privacy-Preserving, Default)
+            // ═══════════════════════════════════════════════════════════
 
-    // CRITICAL FIX: Ensure tap_internal_key is set for taproot outputs
-    // BDK should set this automatically, but we ensure it's present for Tapret embedding
-    {
-        let mut outputs_vec: Vec<_> = bp_psbt.outputs_mut().collect();
-        for (idx, output) in outputs_vec.iter_mut().enumerate() {
-            if output.script.is_p2tr() && output.tap_internal_key.is_none() {
-                // Extract the internal key from the output script pubkey
-                // P2TR script format: OP_1 (0x51) + 32-byte x-only pubkey
-                let script_bytes: &[u8] = output.script.as_ref();
-                if script_bytes.len() == 34 && script_bytes[0] == 0x51 {
-                    // Extract the 32-byte x-only pubkey from the script
-                    let xonly_bytes: [u8; 32] = script_bytes[2..34].try_into().map_err(|_| {
-                        TransferError::Tapret(f1r3fly_rgb::TapretError::CommitmentFailed(
-                            "Failed to extract x-only pubkey from script".to_string(),
-                        ))
-                    })?;
-                    let xonly_pubkey = bp::secp256k1::XOnlyPublicKey::from_slice(&xonly_bytes)
-                        .map_err(|e| {
-                            TransferError::Tapret(f1r3fly_rgb::TapretError::CommitmentFailed(
-                                format!("Invalid x-only pubkey: {}", e),
-                            ))
-                        })?;
-                    output.tap_internal_key = Some(xonly_pubkey.into());
-                    log::debug!("✓ Set tap_internal_key for output {}", idx);
+            // Convert BDK PSBT to BP PSBT for Tapret embedding
+            let bdk_psbt_bytes = psbt.serialize();
+            let mut bp_psbt = BpPsbt::deserialize(&bdk_psbt_bytes).map_err(|e| {
+                TransferError::Tapret(f1r3fly_rgb::TapretError::CommitmentFailed(format!(
+                    "PSBT conversion failed: {:?}",
+                    e
+                )))
+            })?;
+
+            // CRITICAL FIX: Ensure tap_internal_key is set for taproot outputs
+            // BDK should set this automatically, but we ensure it's present for Tapret embedding
+            {
+                let mut outputs_vec: Vec<_> = bp_psbt.outputs_mut().collect();
+                for (idx, output) in outputs_vec.iter_mut().enumerate() {
+                    if output.script.is_p2tr() && output.tap_internal_key.is_none() {
+                        // Extract the internal key from the output script pubkey
+                        // P2TR script format: OP_1 (0x51) + 32-byte x-only pubkey
+                        let script_bytes: &[u8] = output.script.as_ref();
+                        if script_bytes.len() == 34 && script_bytes[0] == 0x51 {
+                            // Extract the 32-byte x-only pubkey from the script
+                            let xonly_bytes: [u8; 32] =
+                                script_bytes[2..34].try_into().map_err(|_| {
+                                    TransferError::Tapret(
+                                        f1r3fly_rgb::TapretError::CommitmentFailed(
+                                            "Failed to extract x-only pubkey from script"
+                                                .to_string(),
+                                        ),
+                                    )
+                                })?;
+                            let xonly_pubkey = bp::secp256k1::XOnlyPublicKey::from_slice(
+                                &xonly_bytes,
+                            )
+                            .map_err(|e| {
+                                TransferError::Tapret(f1r3fly_rgb::TapretError::CommitmentFailed(
+                                    format!("Invalid x-only pubkey: {}", e),
+                                ))
+                            })?;
+                            output.tap_internal_key = Some(xonly_pubkey.into());
+                            log::debug!("✓ Set tap_internal_key for output {}", idx);
+                        }
+                    }
                 }
             }
+
+            // Embed Tapret commitment in the first output (index 0)
+            let tapret_proof =
+                f1r3fly_rgb::embed_tapret_commitment(&mut bp_psbt, 0, result.state_hash)?;
+
+            // Convert BP PSBT back to BDK PSBT
+            let bp_psbt_bytes = bp_psbt.serialize(bp_psbt.version);
+            psbt = bdk_wallet::bitcoin::Psbt::deserialize(&bp_psbt_bytes).map_err(|e| {
+                TransferError::BuildFailed(format!("PSBT conversion back failed: {:?}", e))
+            })?;
+
+            // Create anchor from Tapret proof
+            f1r3fly_rgb::create_anchor(&tapret_proof)?
         }
-    }
 
-    // Embed Tapret commitment in the first output (index 0)
-    let tapret_proof = f1r3fly_rgb::embed_tapret_commitment(&mut bp_psbt, 0, result.state_hash)?;
+        AnchorMethod::OpReturn => {
+            // ═══════════════════════════════════════════════════════════
+            // OP_RETURN Path (Lightning-Compatible)
+            // ═══════════════════════════════════════════════════════════
 
-    // Convert BP PSBT back to BDK PSBT
-    let bp_psbt_bytes = bp_psbt.serialize(bp_psbt.version);
-    psbt = bdk_wallet::bitcoin::Psbt::deserialize(&bp_psbt_bytes)
-        .map_err(|e| TransferError::BuildFailed(format!("PSBT conversion back failed: {:?}", e)))?;
+            // Extract transaction from PSBT
+            let mut tx = psbt
+                .extract_tx()
+                .map_err(|e| TransferError::BuildFailed(format!("Extract TX failed: {}", e)))?;
 
-    // Create anchor from Tapret proof
-    let anchor = f1r3fly_rgb::create_anchor(&tapret_proof)?;
+            // Embed OP_RETURN commitment at index 0
+            let output_index =
+                f1r3fly_rgb::embed_opreturn_commitment(&mut tx, 0, result.state_hash)
+                    .map_err(|e| TransferError::OpReturn(e))?;
 
-    log::info!("✓ Tapret commitment embedded in PSBT");
+            // Recreate PSBT from modified transaction
+            psbt = bdk_wallet::bitcoin::Psbt::from_unsigned_tx(tx).map_err(|e| {
+                TransferError::BuildFailed(format!("PSBT recreation failed: {:?}", e))
+            })?;
+
+            // Sign the modified PSBT (OP_RETURN changes outputs, needs re-signing)
+            #[allow(deprecated)]
+            let sign_options = bdk_wallet::SignOptions::default();
+            bitcoin_wallet
+                .inner_mut()
+                .sign(&mut psbt, sign_options)
+                .map_err(|e| TransferError::SignFailed(format!("{}", e)))?;
+
+            // Create OP_RETURN anchor
+            f1r3fly_rgb::create_opreturn_anchor(result.state_hash, output_index)
+        }
+    };
+
+    log::info!(
+        "✓ {} commitment embedded",
+        match anchor_method {
+            AnchorMethod::Tapret => "Tapret",
+            AnchorMethod::OpReturn => "OP_RETURN",
+        }
+    );
     log::debug!("  State hash: {}", hex::encode(result.state_hash));
     log::debug!("  Output index: 0");
 
