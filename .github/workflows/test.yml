@@ -36,13 +36,19 @@ jobs:
           sudo apt-get install -y protobuf-compiler
       
       - name: Run keys tests
-        run: cargo test --test keys_test -- --nocapture 2>&1 | tee test-keys-output.log || (cat test-keys-output.log && exit 1)
+        run: |
+          set -o pipefail
+          cargo test --test keys_test -- --nocapture 2>&1 | tee test-keys-output.log || (cat test-keys-output.log && exit 1)
       
       - name: Run storage tests
-        run: cargo test --test storage_test -- --nocapture 2>&1 | tee test-storage-output.log || (cat test-storage-output.log && exit 1)
+        run: |
+          set -o pipefail
+          cargo test --test storage_test -- --nocapture 2>&1 | tee test-storage-output.log || (cat test-storage-output.log && exit 1)
       
       - name: Run byte order tests
-        run: cargo test --test byte_order_test -- --nocapture 2>&1 | tee test-byte-order-output.log || (cat test-byte-order-output.log && exit 1)
+        run: |
+          set -o pipefail
+          cargo test --test byte_order_test -- --nocapture 2>&1 | tee test-byte-order-output.log || (cat test-byte-order-output.log && exit 1)
       
       - name: Upload test results
         if: always()
@@ -143,6 +149,7 @@ jobs:
           FIREFLY_PRIVATE_KEY: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
           BITCOIN_DATADIR: /tmp/bitcoin-ci
         run: |
+          set -o pipefail
           cargo test --test bitcoin_integration_tests -- --test-threads=1 --nocapture 2>&1 | tee test-bitcoin-output.log || (cat test-bitcoin-output.log && exit 1)
       
       - name: Collect service logs
@@ -233,6 +240,7 @@ jobs:
           FIREFLY_HTTP_PORT: 40403
           BITCOIN_DATADIR: /tmp/bitcoin-ci
         run: |
+          set -o pipefail
           cargo test --test f1r3fly_integration_tests -- --test-threads=1 --nocapture 2>&1 | tee test-f1r3fly-output.log || (cat test-f1r3fly-output.log && exit 1)
       
       - name: Collect service logs
@@ -337,6 +345,7 @@ jobs:
           FIREFLY_HTTP_PORT: 40403
           BITCOIN_DATADIR: /tmp/bitcoin-ci
         run: |
+          set -o pipefail
           cargo test --test list_utxos_integration_test -- --test-threads=1 --nocapture test_bitcoin_layer_list_utxos test_rgb_layer_seal_info test_manager_orchestration_with_filters test_multiple_rgb_assets test_data_structures_and_edge_cases 2>&1 | tee test-list-utxos-output.log || (cat test-list-utxos-output.log && exit 1)
       
       - name: Collect service logs
@@ -441,6 +450,7 @@ jobs:
           FIREFLY_GRPC_PORT: 40401
           FIREFLY_HTTP_PORT: 40403
         run: |
+          set -o pipefail
           chmod +x test_cli.sh
           ./test_cli.sh 2>&1 | tee test-cli-output.log || (cat test-cli-output.log && exit 1)
       
@@ -453,6 +463,7 @@ jobs:
           FIREFLY_HTTP_PORT: 40403
           BITCOIN_DATADIR: /tmp/bitcoin-ci
         run: |
+          set -o pipefail
           cargo test --test cli_integration_test -- --test-threads=1 --nocapture 2>&1 | tee test-cli-integration-output.log || (cat test-cli-integration-output.log && exit 1)
       
       - name: Upload CLI test logs

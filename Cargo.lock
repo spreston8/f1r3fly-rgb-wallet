@@ -1346,7 +1346,7 @@ dependencies = [
 [[package]]
 name = "f1r3fly-rgb"
 version = "0.1.0"
-source = "git+https://github.com/spreston8/f1r3fly-rgb?branch=master#57b1431db88741de66ff1dd40179241b78e2228c"
+source = "git+https://github.com/spreston8/f1r3fly-rgb?branch=master#146a528434b541bd82f534ea1ce17e84d6e09edf"
 dependencies = [
  "amplify",
  "bitcoin",

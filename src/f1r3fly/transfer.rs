@@ -560,28 +560,19 @@ pub async fn send_transfer(
             // OP_RETURN Path (Lightning-Compatible)
             // ═══════════════════════════════════════════════════════════
 
-            // Extract transaction from PSBT
-            let mut tx = psbt
-                .extract_tx()
-                .map_err(|e| TransferError::BuildFailed(format!("Extract TX failed: {}", e)))?;
-
-            // Embed OP_RETURN commitment at index 0
+            // Modify the PSBT's unsigned transaction directly to preserve witness data
             let output_index =
-                f1r3fly_rgb::embed_opreturn_commitment(&mut tx, 0, result.state_hash)
+                f1r3fly_rgb::embed_opreturn_commitment(&mut psbt.unsigned_tx, 0, result.state_hash)
                     .map_err(|e| TransferError::OpReturn(e))?;
 
-            // Recreate PSBT from modified transaction
-            psbt = bdk_wallet::bitcoin::Psbt::from_unsigned_tx(tx).map_err(|e| {
-                TransferError::BuildFailed(format!("PSBT recreation failed: {:?}", e))
-            })?;
-
-            // Sign the modified PSBT (OP_RETURN changes outputs, needs re-signing)
-            #[allow(deprecated)]
-            let sign_options = bdk_wallet::SignOptions::default();
-            bitcoin_wallet
-                .inner_mut()
-                .sign(&mut psbt, sign_options)
-                .map_err(|e| TransferError::SignFailed(format!("{}", e)))?;
+            // Update PSBT outputs to match the modified unsigned_tx
+            // The OP_RETURN output at index 0 has no witness data, so we just add an empty PsbtOutput
+            psbt.outputs.insert(
+                0,
+                bdk_wallet::bitcoin::psbt::Output {
+                    ..Default::default()
+                },
+            );
 
             // Create OP_RETURN anchor
             f1r3fly_rgb::create_opreturn_anchor(result.state_hash, output_index)
