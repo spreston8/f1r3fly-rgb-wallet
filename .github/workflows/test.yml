@@ -45,6 +45,11 @@ jobs:
           set -o pipefail
           cargo test --test storage_test -- --nocapture 2>&1 | tee test-storage-output.log || (cat test-storage-output.log && exit 1)
       
+      - name: Run claim storage tests
+        run: |
+          set -o pipefail
+          cargo test --test claim_storage_test -- --nocapture 2>&1 | tee test-claim-storage-output.log || (cat test-claim-storage-output.log && exit 1)
+      
       - name: Run byte order tests
         run: |
           set -o pipefail
@@ -67,6 +72,7 @@ jobs:
           path: |
             test-keys-output.log
             test-storage-output.log
+            test-claim-storage-output.log
             test-byte-order-output.log
             target/debug/deps/*.log
           retention-days: 7

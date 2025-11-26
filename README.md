@@ -17,6 +17,7 @@ cargo test -- --test-threads=1
 # Keys and storage tests (no prerequisites, can run in parallel)
 cargo test --test keys_test
 cargo test --test storage_test
+cargo test --test claim_storage_test
 cargo test --test byte_order_test
 
 # Bitcoin integration tests (requires regtest, must run sequentially)

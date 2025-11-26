@@ -145,8 +145,8 @@ fn test_wallet_creation_and_round_trip_encryption() {
     // Verify keys are correctly derived
     assert_eq!(keys.mnemonic.to_string(), mnemonic.to_string());
     assert!(keys.bitcoin_descriptor.starts_with("tr("));
-    assert_eq!(keys.f1r3fly_public_key.len(), 66); // 33 bytes * 2 hex chars
-    assert!(keys.f1r3fly_public_key.starts_with("02") || keys.f1r3fly_public_key.starts_with("03"));
+    assert_eq!(keys.f1r3fly_public_key.len(), 130, "Uncompressed public key should be 130 hex characters (65 bytes)");
+    assert!(keys.f1r3fly_public_key.starts_with("04"), "Uncompressed public key should start with 04");
 
     // Verify first address can be derived
     let first_address = keys
